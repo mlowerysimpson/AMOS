@@ -70,13 +70,25 @@ Vision::~Vision() {//destructor
 //nThresholdInfo = the 2nd most significant byte of nThresholdInfo is 0 for Canny Edge detection or 1 for fast feature detection
 		//least significant byte is the low threshold for Canny Edge detection or the feature threshold for fast feature detection
 		//2nd least significant byte is the high threshold for Canny Edge detection or zero for fast feature detection
+		//2nd most significant byte should be 1 for regular image (no feature detection) or 2 for low quality image (also with no feature detection)
 //szCapFilename = the name of the file where the image will be saved, can be ".jpg", ".png", etc.
 //szOverlayText = text to overlay on the image, set to NULL if no text should be overlayed
 bool Vision::CaptureFrame(int nThresholdInfo, char *szCapFilename, char *overlayText/*=NULL*/) {
 	//check to make sure that camera was opened
 	if (!m_bCameraOpened) return false;
 	bool bCannyEdgeDetection = true;
+	bool  bFastFeatureDetection = false;
+	bool bLowQualityImage = false;
 	if ((nThresholdInfo&0x00ff0000)>0) {
+		bCannyEdgeDetection = false;
+		bFastFeatureDetection = false;
+		int nByte2 = (nThresholdInfo&0x00ff0000)>>16;
+		if (nByte2==2) {
+			bLowQualityImage=true;
+		}
+	}
+	else if ((nThresholdInfo&0x0000ff00)==0) {
+		bFastFeatureDetection = true;
 		bCannyEdgeDetection = false;
 	}
 	//Create Mat image using camera capture
@@ -99,7 +111,7 @@ bool Vision::CaptureFrame(int nThresholdInfo, char *szCapFilename, char *overlay
 	}
 	else {//using fast feature detection to process image
 		int nFeatureThreshold = (nThresholdInfo&0x000000ff);
-		if (nFeatureThreshold==0) {
+		if (nFeatureThreshold==0||!bFastFeatureDetection) {
 			img1_out = img1;
 		}
 		else {//find features in image
@@ -120,7 +132,17 @@ bool Vision::CaptureFrame(int nThresholdInfo, char *szCapFilename, char *overlay
             //cv::CV_AA); // Anti-alias (Optional)
 	}
 	string sOutputFilename = string(szCapFilename);
-	return imwrite(sOutputFilename,img1_out);
+	bool bRetval = false;
+	if (bLowQualityImage) {
+		vector <int>quality_params;
+		quality_params.push_back(CV_IMWRITE_JPEG_QUALITY);
+		quality_params.push_back(20);
+		bRetval = imwrite(sOutputFilename,img1_out,quality_params);
+	}
+	else {
+		bRetval = imwrite(sOutputFilename,img1_out);
+	}
+	return bRetval;
 }
 
 /**
@@ -156,6 +178,9 @@ bool Vision::SendCapturedImage(int nHandle, bool bUseSerial, char *szCapFilename
 	}
 	//also send out file bytes
 	if (bUseSerial) {//using serial port link
+		//test
+		printf("About to send: %d image bytes...\n",nFileSize);
+		//end test
 		if (!BoatCommand::SendLargeSerialData(nHandle, szBytesToSend, nFileSize, pDiagSensor)) {//send large amount of data out serial port, need to get confirmation after sending each chunk
 			return false;
 		}

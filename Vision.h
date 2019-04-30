@@ -19,7 +19,7 @@ public:
 	~Vision();//destructor
 
 	bool CaptureFrameWithDistText(double dDist);//capture frame of video with an estimate of the distance to the object (in m) superimposed on the picture (use autocapture settings for filename)
-	bool CaptureFrame(int nThresholdInfo, char *szCapFilename, char *szOverlayText=NULL);//capture video frame using Canny edge detection or fast feature detection, and store the result to file
+	bool CaptureFrame(int nThresholdInfo, char *szCapFilename, char *szOverlayText=NULL);//capture video frame using Canny edge detection or fast feature detection, or just regular picture (with low-quality option) and store the result to file
 	bool SendCapturedImage(int nHandle, bool bUseSerial, char *szCapFilename, void *pDiagSensor);//send saved image file over network connection or wireless serial port connection
 	void SetLoggingConfig(bool bLogPictures, int nIntervalSec, char *storage_folder, char *filename_prefix);//sets the configuration for continuously logging pictures from the camera
 	void AutoCapturePicture();//capture a picture and log it to file

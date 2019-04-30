@@ -208,62 +208,156 @@ bool BoatCommand::SendBoatData(int nSocket, bool bUseSerial, BOAT_DATA *boatData
  * @return false if there was a problem sending the data.
  */
 bool BoatCommand::SendLargeSerialData(int nSocket, unsigned char *outputBuf, int nNumToSend, void *pDiagSensor) {//send large amount of data out serial port, need to get confirmation after sending each chunk
-#ifndef _WIN32
-	const int CHUNK_SIZE = 512;//maximum amount of data to send out serial port before getting a confirmation in return that it was received
-	const int MAX_NUM_FAILURES = 3;//maximum # of failed confirmations before giving up
+	const int CHUNK_SIZE = 128;//maximum amount of data to send out serial port before getting a confirmation in return that it was received
+	const int MAX_NUM_FAILURES = 5;//maximum # of consecutive failed confirmations before giving up
 	int nNumSent = 0;
 	int nNumFailures = 0;
 	int nNumRemaining = nNumToSend;
+	int nChunkIndex = 0;//number each chunk that is sent out, starting at zero
+	unsigned char chunkBuf[128];//temporary buffer to use for storing each chunk, bytes in chunkBuf are organized as follows:
+	//chunkBuf[0] = 'A'
+	//chunkBuf[1] = 'M'
+	//chunkBuf[2] = 'O'
+	//chunkBuf[3] = 'S'
+	//chunkBuf[4] = <chunk index, most sig byte>
+	//chunkBuf[5] = <chunk index, middle sig byte>
+	//chunkBuf[6] = <chunk index, least sig byte>
+	//chunkBuf[7] = <chunk data portion size (CRC not included), most sig byte>
+	//chunkBuf[8] = <chunk data portion size (CRC not included), least sig byte>
+	//chunkBuf[9] = <first data byte>
+	//chunkBuf[10] = <2nd data byte>
+	//...
+	//chunkBuf[9+#data bytes] = <CRC, most sig byte>
+	//chunkBuf[10+#data bytes] = <CRC, least sig byte>
+#ifndef _WIN32
 	DiagnosticsSensor *pDiag = (DiagnosticsSensor *)pDiagSensor;
 	while (nNumRemaining>0 && nNumFailures<MAX_NUM_FAILURES) {
-		int nNumInChunk = min(nNumRemaining, CHUNK_SIZE);
+		//test
+		printf("nNumRemaining = %d, nNumFailures = %d\n",nNumRemaining,nNumFailures);
+		//end test
+		int nNumInChunk = fillchunk(chunkBuf,nChunkIndex,outputBuf,nNumToSend,nNumSent,CHUNK_SIZE);
+		//test
+		if (nNumInChunk<CHUNK_SIZE) {
+			printf("sending last chunk: %d bytes\n",nNumInChunk);	
+		}
+		//end test
 		for (int i=0;i<nNumInChunk;i++) {
-			serialPutchar(nSocket, outputBuf[nNumSent+i]);
+			//test
+			//printf("outputBuf[%d] = %d\n",nNumSent+i,(int)outputBuf[nNumSent+i]);
+			//end test
+			serialPutchar(nSocket, chunkBuf[i]);
 			//test
 			delay(1);
 			//end test
 		}
-		//now wait for response (0x0d)
-		int nResponse = serialGetchar(nSocket);
-		if (nResponse==0) {//receiver did not receive the expected number of bytes, need to re-send chunk that was just sent
-			//but first need to send sync bytes to make sure that receiver is synced up properly
-			//test
-			printf("Receiver did not get all bytes, sending sync bytes.\n");
-			//end test
-			for (int i=0;i<NUM_RESEND_SYNC_BYTES;i++) {
-				serialPutchar(nSocket, (unsigned char)i);
-
-			}	
-			continue;
+		//now wait for response (should get 2 bytes back that are equal to the checksum bytes that were sent)
+		int nResponse1=0, nResponse2=0;
+		nResponse1 = serialGetchar(nSocket);
+		//test 
+		printf("nResponse1 = %d\n",nResponse1);
+		//end test
+		bool bResponseOK = false;
+		bool bGot2Bytes = false;
+		if  (nResponse1<0) {
+			printf("Timeout waiting for 1st byte of response.\n");
 		}
-		else if (nResponse==0x0a) {//command to stop sending stuff
-			//echo back 0x0a character
-			//test
-			printf("command to stop stending stuff.\n");
-			//end test
-			serialPutchar(nSocket, (unsigned char)0x0a);
-			return false;
+		else if (nResponse1!=((int)chunkBuf[nNumInChunk-2])) {
+			printf("1st byte of response is incorrect.\n");
 		}
-		else if (nResponse!=0x0d) {//got invalid response, or no response at all
-			printf("nResponse = %d",nResponse);
+		else {
+			//1st byte of response was ok, now read in 2nd byte
+			nResponse2 = serialGetchar(nSocket);
+			if (nResponse2<0) {
+				printf("Tiemout waiting for 2nd byte of response.\n");
+			}
+			else if (nResponse2!=((int)chunkBuf[nNumInChunk-1])) {
+				bGot2Bytes = true;
+				printf("2nd byte of response is incorrect.\n");
+			}
+			else {
+				bGot2Bytes = true;
+				//both response bytes were ok
+				bResponseOK = true;
+			}
+		}
+		if (bGot2Bytes&&nResponse1==0x0a&&nResponse2==0x0a) {
+			//if we get a 3rd 0x0a byte, then this is the command to stop sending stuff
+			int nResponse3 = serialGetchar(nSocket);
+			if (nResponse3==0x0a) {//download has been aborted, so stop sending stuff
+				//test
+				printf("command to stop stending stuff.\n");
+				//end test
+				return false;
+			}
+		}
+		if (bResponseOK) {
+			nNumFailures = 0;
+			nNumSent+=(nNumInChunk-11);
+			nNumRemaining-=(nNumInChunk-11);
+			nChunkIndex++;
+		}
+		else {//some problem occurred getting confirmation
 			nNumFailures++;
 			if (nNumFailures>=MAX_NUM_FAILURES) {
 				return false;
 			}
-			//send sync bytes and then try again
-			for (int i=0;i<NUM_RESEND_SYNC_BYTES;i++) {
-				serialPutchar(nSocket, (unsigned char)i);
-			}	
-			continue;
 		}
-		nNumSent+=nNumInChunk;
-		nNumRemaining-=nNumInChunk;
 		//send signal to indicate that program is still running
 		pDiag->ActivityPulse();
-		//test
-		//printf("nNumSent = %d\n",nNumSent);
-		//end test
 	}
 #endif
-	return true;
+	return (nNumFailures<MAX_NUM_FAILURES);
+}
+
+ 
+/**
+ * @brief fill a chunk buffer with synchronization and ID bytes at the beginning, a data payload in the middle, and a couple of CRC bytes at the end
+ * 
+ * @param chunkBuf the returned chunk buffer that is filled from data contained in inputBuf
+ * @param nChunkID an ID number that is inserted into chunkBuf and is useful to positively identify the incoming chunk at the receiving end of the connection.
+ * @param inputBuf the input buffer from which data is taken to form chunkBuf
+ * @param nBufSize the size of the input buffer 
+ * @param nBufIndex the index of inputBuf from which data is to be taken and inserted into chunkBuf
+ * @param nMaxChunkSize the maximum possible size of chunkBuf
+ * @return the # of bytes in chunkBuf, will typically be equal to nMaxChunkSize, except for the last packet of a transmission, which will typically be less
+ */
+int BoatCommand::fillchunk(unsigned char *chunkBuf,int nChunkID,unsigned char *inputBuf,int nBufSize,int nBufIndex,int nMaxChunkSize) {
+	chunkBuf[0] = 'A';
+	chunkBuf[1] = 'M';
+	chunkBuf[2] = 'O';
+	chunkBuf[3] = 'S';
+	//chunkBuf[4] = <chunk index, most sig byte>
+	chunkBuf[4] = (unsigned char)((nChunkID&0x00ff0000)>>16);
+	//chunkBuf[5] = <chunk index, middle sig byte>
+	chunkBuf[5] = (unsigned char)((nChunkID&0x0000ff00)>>8);
+	//chunkBuf[6] = <chunk index, least sig byte>
+	chunkBuf[6] = (unsigned char)(nChunkID&0x000000ff);
+	//test
+	printf("nChunkID = %d, chunkBuf[5] = %d, chunkBuf[6] = %d\n",nChunkID, (int)chunkBuf[5],(int)chunkBuf[6]);
+	//end ntest
+	nMaxChunkSize-=11;//subtract 9 bytes for pre-amble stuff and 2 bytes for CRC bytes
+	int nDataPortionSize = min((nBufSize-nBufIndex),nMaxChunkSize);
+	
+	//chunkBuf[7] = <chunk data portion size (CRC not included), most sig byte>
+	chunkBuf[7] = (unsigned char)((nDataPortionSize&0x0000ff00)>8);
+	//chunkBuf[8] = <chunk data portion size (CRC not included), least sig byte>
+	chunkBuf[8] = (unsigned char)(nDataPortionSize&0x000000ff);
+	//chunkBuf[9] = <first data byte>
+	//chunkBuf[10] = <2nd data byte>
+	//...
+	unsigned int uiChecksum=0;
+	for (int i=0;i<nDataPortionSize;i++) {
+		chunkBuf[9+i] = inputBuf[nBufIndex+i];
+		uiChecksum+=(unsigned int)(inputBuf[nBufIndex+i]);
+	}
+	//chunkBuf[9+#data bytes] = <CRC, most sig byte>
+	unsigned int uiTest1 = uiChecksum&0x0000ff00;
+	unsigned int uiTest2 = uiTest1>>8;
+	chunkBuf[9+nDataPortionSize] = (unsigned char)uiTest2;
+	//chunkBuf[10+#data bytes] = <CRC, least sig byte>
+	chunkBuf[10+nDataPortionSize] = (unsigned char)(uiChecksum&0x000000ff);
+	//test
+	printf("chunkBuf[%d] = %d\n",10+nDataPortionSize,(int)chunkBuf[10+nDataPortionSize]);
+	//end test
+	return 11 + nDataPortionSize;
 }
