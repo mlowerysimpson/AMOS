@@ -908,7 +908,7 @@ bool IMU::DoMagCal() {//perform a calibration procedure on the magnetometers to 
 	}
 
 	int nSampleNum=0;
-	while (nKeyPressed!=113&&nKeyPressed!=99) {
+	while (nKeyPressed!=113&&nKeyPressed!=99) {//keep looping, looking for new max or min values until the 'c' for calibrate or 'q' for quit keys are pressed
 		if (WaitForMagDataReady(MAG_STATUS_REG)) {
 			if (Get6BytesRegData(mag_data[nSampleNum%NUM_MAGCAL_AVG], MAG_OUTX_L)) {
 				nSampleNum++;

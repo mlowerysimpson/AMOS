@@ -296,8 +296,10 @@ void Navigation::TurnToCompassHeading(float fHeading,void *pThrusters,pthread_mu
 	float fSpeedLeft=0, fSpeedRight=0;//left and right thruster speeds (start at slow speed)
 	char sMsg[256];
 	Thruster *pThrust = (Thruster *)pThrusters;
+	bool bAirBoat = false;
 	if (pThrust->isAirBoat()) {
 		MAX_TURN_SPEED = MAX_RECOMMENDED_AIRPROP_SPEED;
+		bAirBoat = true;
 	}
 	ShipLog *pLog = (ShipLog *)pShipLog;
 	if (!m_imu) {
@@ -318,6 +320,10 @@ void Navigation::TurnToCompassHeading(float fHeading,void *pThrusters,pthread_mu
 	while ((millis() - *lastNetworkCommandTimeMS)<10000&&!*bCancel) {
 		usleep(1000000);//delay executing thruster actions after recent network commands
 	}
+	while (m_imuData.sample_time_sec==0.0&&!*bCancel) {
+		//wait for a valid sample of heading data
+		usleep(10000);
+	}
 	pthread_mutex_lock(command_mutex);
 	pThrust->Stop();
 	pthread_mutex_unlock(command_mutex);
@@ -333,12 +339,18 @@ void Navigation::TurnToCompassHeading(float fHeading,void *pThrusters,pthread_mu
 				if (fSpeedLeft>MAX_TURN_SPEED) fSpeedLeft = MAX_TURN_SPEED;
 				if (fSpeedLeft<0) fSpeedLeft=0;//already rotating in right direction, just turn off thruster 
 				fSpeedRight = -fSpeedLeft;
+				if (bAirBoat&&fSpeedRight<0) {
+					fSpeedRight = 0;
+				}
 			}
 			else {//need to turn counter_clockwise
 				fSpeedRight = (dEstimatedTimeLeft - 5) / 50 * MAX_TURN_SPEED;
 				if (fSpeedRight>MAX_TURN_SPEED) fSpeedRight = MAX_TURN_SPEED;
 				if (fSpeedRight<0) fSpeedRight=0;//already rotating in right direction, just turn off thruster 
 				fSpeedLeft = -fSpeedRight;
+				if (bAirBoat&&fSpeedLeft<0) {
+					fSpeedLeft = 0;
+				}
 			}
 		}
 		while ((millis() - *lastNetworkCommandTimeMS)<10000&&!*bCancel) {
@@ -349,7 +361,7 @@ void Navigation::TurnToCompassHeading(float fHeading,void *pThrusters,pthread_mu
 		//sprintf(sMsg,"fSpeedLeft = %.1f, fSpeedRight = %.1f\n",fSpeedLeft,fSpeedRight);
 		//pLog->LogEntry(sMsg,true);
 		//end test
-		if (pThrust->isAirBoat()) {
+		/*if (pThrust->isAirBoat()) {
 			//minimum required turning speed for airboat (+/- 2)
 			if (fSpeedLeft<0&&fSpeedLeft>-2) {
 				fSpeedLeft=-2;
@@ -363,7 +375,7 @@ void Navigation::TurnToCompassHeading(float fHeading,void *pThrusters,pthread_mu
 			else if (fSpeedRight>0&&fSpeedRight<2) {
 				fSpeedRight=2;
 			}
-		}
+		}*/
 		pThrust->SetLeftRightSpeed(fSpeedLeft, fSpeedRight);
 		pthread_mutex_unlock(command_mutex);
 		usleep(100000);//loop every 100 ms
@@ -373,6 +385,9 @@ void Navigation::TurnToCompassHeading(float fHeading,void *pThrusters,pthread_mu
 		//pLog->LogEntry(sMsg,true);
 		//end test
 		dEstimatedTimeLeft = dHeadingDif / m_dFilteredYawRate;
+		//test
+		printf("dHeadingDif = %.1f, m_dFilteredYawRate = %.1f, dEstimatedTimeLeft = %.1f\n",dHeadingDif,m_dFilteredYawRate,dEstimatedTimeLeft);
+		//end test
 	}
 	while ((millis() - *lastNetworkCommandTimeMS)<10000&&!*bCancel) {
 		usleep(1000000);//delay executing thruster actions after recent network commands
@@ -1325,8 +1340,9 @@ float Navigation::TurnToRandomAngle(void *pThrusters, pthread_mutex_t *command_m
 
 void Navigation::TrimAirRudder(float &fAirRudderAngle,float fHeadingError,float fDesiredHeading,void *pShipLog) {//fine-tune air rudder angle in order to correct any heading error
 	//make sure we don't have more than 180 degrees of heading error
-	const float YAW_FACTOR = 2;//relative factor that takes into consideration the importance of the estimated yaw rate in determining thruster power
-	const float MAX_TRIM = .5;//maximum amount to trim thruster (in degrees) in each iteration of this function
+	const float YAW_FACTOR = 5;//relative factor that takes into consideration the importance of the estimated yaw rate in determining thruster power
+	const float MAX_TRIM = 2;//maximum amount to trim thruster (in degrees) in each iteration of this function
+	const float MAX_TRIM_RUDDER_ANGLE = 20;//maximum amount to move rudder (from straight) when trimming the boat's direction
 	unsigned int uiCurrentTime = millis();
 	
 	m_uiPreviousTrimTime = uiCurrentTime;
@@ -1347,23 +1363,23 @@ void Navigation::TrimAirRudder(float &fAirRudderAngle,float fHeadingError,float 
 	float fTrimAmount = 0;
 	//set trim amount based on heading error, > 0 means turn boat CCW, < 0 means turn boat CW
 	if (fHeadingError>0) {//need to turn the boat CCW, so decrease trim angle
-		fTrimAmount = -fHeadingError / 15;
+		fTrimAmount = -fHeadingError / 2;
 		if (fTrimAmount< (-MAX_TRIM)) {
 			fTrimAmount=-MAX_TRIM;
 		}
 	}
 	else if (fHeadingError<0) {//need to turn the boat CW, so decrease speed of right propeller or increase speed of left propeller
-		fTrimAmount = -fHeadingError / 15;
+		fTrimAmount = -fHeadingError / 2;
 		if (fTrimAmount>MAX_TRIM) {
 			fTrimAmount=MAX_TRIM;
 		}
 	}
 	fAirRudderAngle+=fTrimAmount;
-	if (fAirRudderAngle<MIN_RUDDER_ANGLE) {
-		fAirRudderAngle = MIN_RUDDER_ANGLE;
+	if (fAirRudderAngle<-MAX_TRIM_RUDDER_ANGLE) {
+		fAirRudderAngle = -MAX_TRIM_RUDDER_ANGLE;
 	}
-	else if (fAirRudderAngle>MAX_RUDDER_ANGLE) {
-		fAirRudderAngle = MAX_RUDDER_ANGLE;
+	else if (fAirRudderAngle>MAX_TRIM_RUDDER_ANGLE) {
+		fAirRudderAngle = MAX_TRIM_RUDDER_ANGLE;
 	}
 	//test
 	printf("fHeadingError = %.1f, fAirRudderAngle = %.1f\n",fHeadingError,fAirRudderAngle);

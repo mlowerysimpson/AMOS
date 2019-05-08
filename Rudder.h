@@ -1,8 +1,6 @@
 #define RUDDER_LIMIT 90.0 //maximum angular limit of servo motor is +/- RUDDER_LIMIT
 #define MIN_RUDDER_ANGLE -70.0 //minimum allowed angle of air rudder in degrees
 #define MAX_RUDDER_ANGLE 70.0 //maximum allowed angle of air rudder in degrees
-#define MIN_TRIM_RUDDER_ANGLE -70.0 //minimum allowed angle of air rudder when moving at speed
-#define MAX_TRIM_RUDDER_ANGLE 70.0 //maximum allowed angle of air rudder when moving at speed
 #define ZERO_RUDDER_PULSE_TIME 1520 //pulse time in microseconds required for sending the zero degree angle to the rudder
 #define MAX_RUDDER_PULSE_TIME 2500 //maximum pulse time in microseconds, corresponds to maximum possible rudder angle
 #define MIN_RUDDER_PULSE_TIME 500 //mininum pulse time in microseconds, corresponds to minimum possible rudder angle

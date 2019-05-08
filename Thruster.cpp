@@ -118,7 +118,7 @@ void Thruster::SetLeftRightSpeed(float fLeftSpeed, float fRightSpeed) {//set spe
 		float fSpeedDif = fLeftSpeed - fRightSpeed;
 		float fRudderAngle = 0;
 		if (fMaxSpeed>0) {
-			fRudderAngle = MAX_RUDDER_ANGLE * fSpeedDif / fMaxSpeed;
+			fRudderAngle = MAX_RUDDER_ANGLE * fSpeedDif / MAX_AIRPROP_SPEED;
 		}
 		if (fRudderAngle>MAX_RUDDER_ANGLE) fRudderAngle = MAX_RUDDER_ANGLE;
 		else if (fRudderAngle<MIN_RUDDER_ANGLE) fRudderAngle = MIN_RUDDER_ANGLE;

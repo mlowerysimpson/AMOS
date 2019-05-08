@@ -34,16 +34,6 @@ void Rudder::SetAngle(float fSpeed, float fAngle) {//set angle of rudder (in deg
 	}
 	m_fAngle = fAngle;
 	
-	if (fSpeed>3) {
-		//need to make sure that fAngle is within range of MIN_TRIM_RUDDER_ANGLE to MAX_TRIM_RUDDER_ANGLE
-		if (fAngle<MIN_TRIM_RUDDER_ANGLE) {
-			fAngle = MIN_TRIM_RUDDER_ANGLE;
-		}
-		else if (fAngle>MAX_TRIM_RUDDER_ANGLE) {
-			fAngle = MAX_TRIM_RUDDER_ANGLE;
-		}
-	}
-
 	int nDelayVal = ZERO_RUDDER_PULSE_TIME;
 	fAngle+=RUDDER_SERVO_BIAS;//add on rudder servo bias
 	if (fAngle>0) {
