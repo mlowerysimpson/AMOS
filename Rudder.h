@@ -9,7 +9,7 @@
 #define RUDDER_TIME_INCREMENT_US 3.33 //timing for data portion of clock pulses has this resolution in microseconds
 #define RUDDER_DEAD_BAND 3 // +/- value (in uS) around ZERO_PULSE_TIME for which the rudder will stay at zero degrees
 #define RUDDER_PWM_PIN 40  //gpio pin to use for PWM for rudder (requires Alt0 alternative pin function)
-#define RUDDER_SERVO_BIAS 20 //bias angle of servo motor that puts the rudder at a zero degree angle relative to the boat
+#define RUDDER_SERVO_BIAS 26 //bias angle of servo motor that puts the rudder at a zero degree angle relative to the boat
 
 class Rudder {
 public:
