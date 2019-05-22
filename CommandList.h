@@ -87,7 +87,6 @@ public:
 	static unsigned char CalculateChecksum(BOAT_DATA *pData);//calculate simple 8-bit checksum for BOAT_DATA structure
 	
 private:
-	static void SendSyncBytes(int nSocket);//send sync bytes out serial port
 	static int fillchunk(unsigned char *chunkBuf,int nChunkID,unsigned char *outputBuf,int nBufSize,int nBufIndex,int nMaxChunkSize);
 
 };
