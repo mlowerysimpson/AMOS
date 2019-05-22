@@ -209,7 +209,7 @@ bool BoatCommand::SendBoatData(int nSocket, bool bUseSerial, BOAT_DATA *boatData
  */
 bool BoatCommand::SendLargeSerialData(int nSocket, unsigned char *outputBuf, int nNumToSend, void *pDiagSensor) {//send large amount of data out serial port, need to get confirmation after sending each chunk
 	const int CHUNK_SIZE = 128;//maximum amount of data to send out serial port before getting a confirmation in return that it was received
-	const int MAX_NUM_FAILURES = 5;//maximum # of consecutive failed confirmations before giving up
+	const int MAX_NUM_FAILURES = 20;//maximum # of consecutive failed confirmations before giving up
 	int nNumSent = 0;
 	int nNumFailures = 0;
 	int nNumRemaining = nNumToSend;
@@ -237,6 +237,7 @@ bool BoatCommand::SendLargeSerialData(int nSocket, unsigned char *outputBuf, int
 		//end test
 		int nNumInChunk = fillchunk(chunkBuf,nChunkIndex,outputBuf,nNumToSend,nNumSent,CHUNK_SIZE);
 		//test
+		printf("nNumInChunk = %d\n",nNumInChunk);
 		if (nNumInChunk<CHUNK_SIZE) {
 			printf("sending last chunk: %d bytes\n",nNumInChunk);	
 		}
@@ -247,7 +248,7 @@ bool BoatCommand::SendLargeSerialData(int nSocket, unsigned char *outputBuf, int
 			//end test
 			serialPutchar(nSocket, chunkBuf[i]);
 			//test
-			delay(1);
+			//delay(1);
 			//end test
 		}
 		//now wait for response (should get 2 bytes back that are equal to the checksum bytes that were sent)
@@ -263,12 +264,15 @@ bool BoatCommand::SendLargeSerialData(int nSocket, unsigned char *outputBuf, int
 		}
 		else if (nResponse1!=((int)chunkBuf[nNumInChunk-2])) {
 			printf("1st byte of response is incorrect.\n");
+			//pause and then flush buffer
+			delay(100);
+			serialFlush(nSocket);
 		}
 		else {
 			//1st byte of response was ok, now read in 2nd byte
 			nResponse2 = serialGetchar(nSocket);
 			if (nResponse2<0) {
-				printf("Tiemout waiting for 2nd byte of response.\n");
+				printf("Timeout waiting for 2nd byte of response.\n");
 			}
 			else if (nResponse2!=((int)chunkBuf[nNumInChunk-1])) {
 				bGot2Bytes = true;
@@ -295,6 +299,10 @@ bool BoatCommand::SendLargeSerialData(int nSocket, unsigned char *outputBuf, int
 			nNumSent+=(nNumInChunk-11);
 			nNumRemaining-=(nNumInChunk-11);
 			nChunkIndex++;
+			//test
+			delay(100);
+			serialFlush(nSocket);
+			//end test
 		}
 		else {//some problem occurred getting confirmation
 			nNumFailures++;
@@ -345,17 +353,16 @@ int BoatCommand::fillchunk(unsigned char *chunkBuf,int nChunkID,unsigned char *i
 	//chunkBuf[9] = <first data byte>
 	//chunkBuf[10] = <2nd data byte>
 	//...
-	unsigned int uiChecksum=0;
+	int nChecksum=0;
 	for (int i=0;i<nDataPortionSize;i++) {
 		chunkBuf[9+i] = inputBuf[nBufIndex+i];
-		uiChecksum+=(unsigned int)(inputBuf[nBufIndex+i]);
+		nChecksum+=(int)(inputBuf[nBufIndex+i]);
 	}
 	//chunkBuf[9+#data bytes] = <CRC, most sig byte>
-	unsigned int uiTest1 = uiChecksum&0x0000ff00;
-	unsigned int uiTest2 = uiTest1>>8;
-	chunkBuf[9+nDataPortionSize] = (unsigned char)uiTest2;
+	int nTest1 = (nChecksum&0x0000ff00)/256;
+	chunkBuf[9+nDataPortionSize] = (unsigned char)nTest1;
 	//chunkBuf[10+#data bytes] = <CRC, least sig byte>
-	chunkBuf[10+nDataPortionSize] = (unsigned char)(uiChecksum&0x000000ff);
+	chunkBuf[10+nDataPortionSize] = (unsigned char)(nChecksum&0x000000ff);
 	//test
 	printf("chunkBuf[%d] = %d\n",10+nDataPortionSize,(int)chunkBuf[10+nDataPortionSize]);
 	//end test

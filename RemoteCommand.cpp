@@ -222,6 +222,9 @@ bool RemoteCommand::ExecuteCommand(REMOTE_COMMAND *pCommand, bool bUseSerial) {/
 		m_thrusters->SetAirPropSpeedAndRudderAngle(pPropState->fPropSpeed, pPropState->fRudderAngle);
 	}
 	else if (pCommand->nCommand==GPS_DATA_PACKET) {
+		//test
+		printf("GPS command...\n");
+		//end test
 		if (!m_pNav->SendGPSData(m_nSocket, bUseSerial)) {
 			//test
 			printf("failed to send gps data.\n");
@@ -394,7 +397,8 @@ REMOTE_COMMAND * RemoteCommand::GetSerialCommand() {
 		}
 		nNumBytesAvailable = serialDataAvail(m_nSocket);//the number of characters available in the serial buffer
 	}
-	if (!WaitForSerialBytes(2,100)) {
+	int nNumAvailable = 0;
+	if (!WaitForSerialBytes(2,100,nNumAvailable)) {
 		//not enough bytes came in
 		//test
 		printf("not enough bytes\n");
@@ -427,7 +431,7 @@ REMOTE_COMMAND * RemoteCommand::GetSerialCommand() {
 
 	if (requiresMoreData(nCommand)) {
 		unsigned char dataSizeBytes[4];
-		if (!WaitForSerialBytes(4,100)) {
+		if (!WaitForSerialBytes(4,100,nNumAvailable)) {
 			//test
 			printf("Error, not enough datasize bytes arrived.\n");
 			serialFlush(m_nSocket);//flush serial buffer
@@ -450,10 +454,10 @@ REMOTE_COMMAND * RemoteCommand::GetSerialCommand() {
 		int nDataSize = (int)GetUIntFromBytes(dataSizeBytes);
 		pCommandReceived->nNumDataBytes = nDataSize;
 		if (nDataSize>0) {
-			if (!WaitForSerialBytes(nDataSize,100)) {
+			if (!WaitForSerialBytes(nDataSize,100,nNumAvailable)) {
 				//test 
 				serialFlush(m_nSocket);//flush serial buffer
-				printf("Error, not enough data.\n");
+				printf("Error, not enough data (%d of %d bytes available).\n",nNumAvailable,nDataSize);
 				delete pCommandReceived;
 				return nullptr;
 			}
@@ -496,7 +500,7 @@ bool RemoteCommand::isValidCommand(int nCommand) {//checks to see if nCommand co
 	return false;
 }
 
-bool RemoteCommand::WaitForSerialBytes(int nNumSerialBytesExpected, unsigned int uiTimeoutMS) {//waits up to uiTimeoutMS milliseconds for nNumSerialBytesExpected to be available in the serial buffer
+bool RemoteCommand::WaitForSerialBytes(int nNumSerialBytesExpected, unsigned int uiTimeoutMS, int &nNumAvailable) {//waits up to uiTimeoutMS milliseconds for nNumSerialBytesExpected to be available in the serial buffer
 	//returns true if at least nNumSerialBytesExpected are available in the buffer, false otherwise
 	int nNumAvail = serialDataAvail(m_nSocket);//the number of characters available in the serial buffer
 	unsigned int uiTimeoutTime = millis() + uiTimeoutMS;
@@ -504,5 +508,6 @@ bool RemoteCommand::WaitForSerialBytes(int nNumSerialBytesExpected, unsigned int
 		nNumAvail = serialDataAvail(m_nSocket);
 		delay(10);
 	}	
+	nNumAvailable = nNumAvail;
 	return nNumAvail>=nNumSerialBytesExpected;
 }

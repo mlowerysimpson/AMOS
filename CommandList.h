@@ -85,10 +85,10 @@ public:
 	static bool SendBoatData(int nSocket, bool bUseSerial, BOAT_DATA *boatData, void *pDiagnostics);//sends boat data out over socket or serial port connection
 	static bool SendLargeSerialData(int nSocket, unsigned char *outputBuf, int nNumToSend, void *pDiagSensor);//send large amount of data out serial port, need to get confirmation after sending each chunk
 	static unsigned char CalculateChecksum(BOAT_DATA *pData);//calculate simple 8-bit checksum for BOAT_DATA structure
+	
 private:
-	
-
-	
+	static void SendSyncBytes(int nSocket);//send sync bytes out serial port
+	static int fillchunk(unsigned char *chunkBuf,int nChunkID,unsigned char *outputBuf,int nBufSize,int nBufIndex,int nMaxChunkSize);
 
 };
 

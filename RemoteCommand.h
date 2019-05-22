@@ -60,7 +60,7 @@ private:
 	int m_nSocket;//network socket identifier or serial port file descriptor if in serial port mode (i.e. m_bSerportMode==true)
 	
 	//functions
-	bool WaitForSerialBytes(int nNumSerialBytesExpected, unsigned int uiTimeoutMS);//waits up to uiTimeoutMS milliseconds for nNumSerialBytesExpected to be available in the serial buffer
+	bool WaitForSerialBytes(int nNumSerialBytesExpected, unsigned int uiTimeoutMS, int &nNumAvailable);//waits up to uiTimeoutMS milliseconds for nNumSerialBytesExpected to be available in the serial buffer
 	void ExitMoveThreads();
 	void MoveToLocationThread();//start thread that moves the boat to a particular GPS destination
 	void MoveForwardInFixedDirection();//start thread that moves the boat forward in its current heading

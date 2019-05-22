@@ -112,7 +112,7 @@ void *serportFunction(void *pParam) {//function receives commands from base stat
 	char sMsg[128];
 	char buffer[256];
 	char *szSerportName = (char  *)pParam;
-	int fd = serialOpen (szSerportName, 115200);
+	int fd = serialOpen (szSerportName, 9600);
 	if (fd<0) {
 		printf ("Unable to open serial device: %s\n", strerror (errno));
 		g_bSerportThreadRunning = false;

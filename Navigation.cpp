@@ -141,7 +141,7 @@ bool Navigation::CollectGPSData(void *pShipLog, bool *bKeepGoing) {//collects a 
 	struct gps_data_t *gpsd_data;
 	if (!*bKeepGoing) return false;
 	if (!m_gps_rec->waiting(TIMEOUT_TIME_US)) {
-		pLog->LogEntry((char *)"GPS timeout.\n",true);
+		//pLog->LogEntry((char *)"GPS timeout.\n",true);
 		return false;
 	}
 	if (!*bKeepGoing) return false;
