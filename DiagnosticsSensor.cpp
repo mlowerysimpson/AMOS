@@ -44,6 +44,9 @@ void DiagnosticsSensor::SetSerportHandle(int fd) {
  * @return false if some sort of error occurred trying to get the current.
  */
 bool DiagnosticsSensor::GetCurrentDraw(float &fCurrent) {
+    //test
+    printf("getting current draw\n");
+    //end test
     fCurrent=0;
     if (m_fd==0) {
         m_fd = OpenDefaultPort();
@@ -104,6 +107,8 @@ int DiagnosticsSensor::OpenDefaultPort() {//tries to open the default serial por
     const int BAUD_RATE = 9600;
     m_bOpenedPort = false;
     int fd = serialOpen((char *)DEFAULT_DIAG_PORT, BAUD_RATE);
+    printf("serial port handle opened for diagnostics communications, fd = %d\n",
+        fd);
     return fd;
 }
 
@@ -149,6 +154,9 @@ bool DiagnosticsSensor::IsSolarCharging() {
         }
         m_bOpenedPort = true;
     }
+    //test
+    printf("getting solar status\n");
+    //end test
     //flush serial port
     serialFlush(m_fd);
     //send carriage return, followed by 's' followed by carriage return out serial port to get measured values in counts for the voltages at the + and - solar charger inputs
@@ -313,6 +321,9 @@ bool DiagnosticsSensor::GetHumidityAndTemp(float &fHumidity, float &fTemp) {
  */
 bool DiagnosticsSensor::GetWirelessRXPower(float &fRXPower) {//
     fRXPower=0;
+    //test
+    printf("getting wireless rx power\n");
+    //end test
     if (m_fd==0) {
         m_fd = OpenDefaultPort();
         if (m_fd==0) {

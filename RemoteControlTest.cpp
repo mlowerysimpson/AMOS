@@ -123,7 +123,7 @@ void *serportFunction(void *pParam) {//function receives commands from base stat
 		g_bSerportThreadRunning = false;
 		return nullptr;
 	}
-	g_shipdiagnostics->SetSerportHandle(fd);
+	//g_shipdiagnostics->SetSerportHandle(fd);
 	sprintf(sMsg,"Listening for commands on port %s\n",szSerportName);
 	g_shiplog.LogEntry(sMsg,true);
 

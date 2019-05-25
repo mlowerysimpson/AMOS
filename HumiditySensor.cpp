@@ -210,10 +210,17 @@ bool HumiditySensor::CollectHumidityData() {
 			// * 256 is the same thing '<< 8' (shift).
 			pthread_mutex_lock(&m_threadMutex);
 			m_fHumidity = ((data[0] * 256) + data[1]) / 10.0;
-			m_fTemperature = data[3] / 10.0;
-			// If 'data[2]' data like 1000 0000, It means minus temperature
-			if (data[2] == 0x80) {
-				m_fTemperature *= -1;
+			
+			bool bPosTemperature = false;
+			if ((data[2]&0x80)==0) {
+				bPosTemperature = true;//temperature is positive
+			}
+			if (bPosTemperature) {
+				m_fTemperature = ((data[2]*256) + data[3]) / 10.0;
+			}
+			else {
+				//temperature is negative
+				m_fTemperature = -(((data[2]&0x7F)*256) + data[3]) / 10;
 			}
 			pthread_mutex_unlock(&m_threadMutex);
 		}

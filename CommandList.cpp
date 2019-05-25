@@ -248,7 +248,7 @@ bool BoatCommand::SendLargeSerialData(int nSocket, unsigned char *outputBuf, int
 			//end test
 			serialPutchar(nSocket, chunkBuf[i]);
 			//test
-			//delay(1);
+			delay(1);
 			//end test
 		}
 		//now wait for response (should get 2 bytes back that are equal to the checksum bytes that were sent)
@@ -264,9 +264,6 @@ bool BoatCommand::SendLargeSerialData(int nSocket, unsigned char *outputBuf, int
 		}
 		else if (nResponse1!=((int)chunkBuf[nNumInChunk-2])) {
 			printf("1st byte of response is incorrect.\n");
-			//pause and then flush buffer
-			delay(100);
-			serialFlush(nSocket);
 		}
 		else {
 			//1st byte of response was ok, now read in 2nd byte
@@ -299,16 +296,15 @@ bool BoatCommand::SendLargeSerialData(int nSocket, unsigned char *outputBuf, int
 			nNumSent+=(nNumInChunk-11);
 			nNumRemaining-=(nNumInChunk-11);
 			nChunkIndex++;
-			//test
-			delay(100);
-			serialFlush(nSocket);
-			//end test
 		}
 		else {//some problem occurred getting confirmation
 			nNumFailures++;
 			if (nNumFailures>=MAX_NUM_FAILURES) {
 				return false;
 			}
+			//pause and then flush buffer
+			delay(100);
+			serialFlush(nSocket);
 		}
 		//send signal to indicate that program is still running
 		pDiag->ActivityPulse();
