@@ -242,56 +242,61 @@ bool BoatCommand::SendLargeSerialData(int nSocket, unsigned char *outputBuf, int
 			printf("sending last chunk: %d bytes\n",nNumInChunk);	
 		}
 		//end test
-		for (int i=0;i<nNumInChunk;i++) {
+		/*for (int i=0;i<nNumInChunk;i++) {
 			//test
 			//printf("outputBuf[%d] = %d\n",nNumSent+i,(int)outputBuf[nNumSent+i]);
 			//end test
 			serialPutchar(nSocket, chunkBuf[i]);
-			//test
-			delay(1);
-			//end test
+			//delay(1);
+		}*/
+		if (write(nSocket,chunkBuf,nNumInChunk)!=nNumInChunk) {
+			printf("serial write error\n");
 		}
-		//now wait for response (should get 2 bytes back that are equal to the checksum bytes that were sent)
-		int nResponse1=0, nResponse2=0;
-		nResponse1 = serialGetchar(nSocket);
-		//test 
-		printf("nResponse1 = %d\n",nResponse1);
-		//end test
-		bool bResponseOK = false;
-		bool bGot2Bytes = false;
-		if  (nResponse1<0) {
-			printf("Timeout waiting for 1st byte of response.\n");
+		//now wait for response (should get 4 bytes back indicating successful reception or an error)
+		unsigned int uiStartTime = millis();
+		unsigned int uiTimeoutTime = uiStartTime + 1000;
+		int nNumAvail = serialDataAvail(nSocket);
+		while (nNumAvail<4&&millis()<uiTimeoutTime) {
+			nNumAvail = serialDataAvail(nSocket);
+			delay(10);
 		}
-		else if (nResponse1!=((int)chunkBuf[nNumInChunk-2])) {
-			printf("1st byte of response is incorrect.\n");
+		bool bError = false;
+		bool bCancel = false;
+		if  (nNumAvail<4) {
+			bError = true;
+			printf("Timeout waiting for response, %d bytes received.\n",nNumAvail);
+			for (int i=0;i<nNumAvail;i++) {
+				printf("%d, ",serialGetchar(nSocket));
+			}
+			printf("\n");
 		}
 		else {
-			//1st byte of response was ok, now read in 2nd byte
-			nResponse2 = serialGetchar(nSocket);
-			if (nResponse2<0) {
-				printf("Timeout waiting for 2nd byte of response.\n");
+			int nByte1 = serialGetchar(nSocket);
+			int nByte2 = serialGetchar(nSocket);
+			int nByte3 = serialGetchar(nSocket);
+			int nByte4 = serialGetchar(nSocket);
+			printf("bytes received: %d, %d, %d, %d\n",nByte1,nByte2,nByte3,nByte4);
+			if (nByte1==0xff||nByte2==0xff) {
+				//error occurred
+				bError = true;
 			}
-			else if (nResponse2!=((int)chunkBuf[nNumInChunk-1])) {
-				bGot2Bytes = true;
-				printf("2nd byte of response is incorrect.\n");
-			}
-			else {
-				bGot2Bytes = true;
-				//both response bytes were ok
-				bResponseOK = true;
-			}
-		}
-		if (bGot2Bytes&&nResponse1==0x0a&&nResponse2==0x0a) {
-			//if we get a 3rd 0x0a byte, then this is the command to stop sending stuff
-			int nResponse3 = serialGetchar(nSocket);
-			if (nResponse3==0x0a) {//download has been aborted, so stop sending stuff
+			else if (nByte1==0xaa||nByte2==0xaa) {
+				bCancel = true;
 				//test
 				printf("command to stop stending stuff.\n");
 				//end test
 				return false;
 			}
+			else if (nByte3!=((int)chunkBuf[nNumInChunk-2])) {
+				bError = true;
+				printf("1st returned checksum byte is wrong.\n");
+			}
+			else if (nByte4!=((int)chunkBuf[nNumInChunk-1])) {
+				bError = true;
+				printf("2nd returned checksum byte is wrong.\n");
+			}
 		}
-		if (bResponseOK) {
+		if (!bError) {
 			nNumFailures = 0;
 			nNumSent+=(nNumInChunk-11);
 			nNumRemaining-=(nNumInChunk-11);
@@ -302,9 +307,6 @@ bool BoatCommand::SendLargeSerialData(int nSocket, unsigned char *outputBuf, int
 			if (nNumFailures>=MAX_NUM_FAILURES) {
 				return false;
 			}
-			//pause and then flush buffer
-			delay(100);
-			serialFlush(nSocket);
 		}
 		//send signal to indicate that program is still running
 		pDiag->ActivityPulse();

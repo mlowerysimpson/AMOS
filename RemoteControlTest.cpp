@@ -112,7 +112,7 @@ void *serportFunction(void *pParam) {//function receives commands from base stat
 	char sMsg[128];
 	char buffer[256];
 	char *szSerportName = (char  *)pParam;
-	int fd = serialOpen (szSerportName, 9600);
+	int fd = serialOpen (szSerportName, 38400);
 	if (fd<0) {
 		printf ("Unable to open serial device: %s\n", strerror (errno));
 		g_bSerportThreadRunning = false;
@@ -657,7 +657,7 @@ void GetDataLoggingPreferences() {//get data logging preferences from prefs.txt 
 	g_bObjectPictures = (bool)prefsFile.getInteger((char *)"[lidar]",(char *)"object_pictures");//whether or not to take a picture whenever an obstacle is encountered.	
 	g_bLiDARSafetyMode = (bool)prefsFile.getInteger((char *)"[lidar]",(char *)"safety_mode");//whether or not to turn off thrusters whenever an obstacle is encountered
 	if (g_bUseLiDAR) {
-		int fd = serialOpen ((char *)"/dev/serial0", 115200);
+		int fd = serialOpen ((char *)"/dev/serial0", 38400);
 		if (fd<0) {
 			g_bUseLiDAR=false;
 			sprintf (sMsg,"Error, unable to open serial device: %s\n", strerror (errno));

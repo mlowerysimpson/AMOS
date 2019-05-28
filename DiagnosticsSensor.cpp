@@ -104,7 +104,7 @@ bool DiagnosticsSensor::GetCurrentDraw(float &fCurrent) {
 }
 
 int DiagnosticsSensor::OpenDefaultPort() {//tries to open the default serial port, and if successful returns a file descriptor to that serial port
-    const int BAUD_RATE = 9600;
+    const int BAUD_RATE = 38400;
     m_bOpenedPort = false;
     int fd = serialOpen((char *)DEFAULT_DIAG_PORT, BAUD_RATE);
     printf("serial port handle opened for diagnostics communications, fd = %d\n",
