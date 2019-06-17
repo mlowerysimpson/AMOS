@@ -27,13 +27,17 @@ PHSensor::~PHSensor() {
 //dPHVal: the returned pH value (0 to 14)
 //returns true if successful, false otherwise
 bool PHSensor::GetPHSensorPH(double &dPHVal) {
-	//assumes use of voltage divider of 10K in series with another 10K resistor to ground, so voltage gain is as follows:
-	const double R1 = 10.0;//10k resistor
-	const double R2 = 10.0;//10k resistor
+	//calibration obtained using voltage divider of 10K in series with another 10K resistor to ground
 	char sMsg[256];
 	if (!m_pAToD) return false;
-    double dPHVoltage=0.0;
-	bool bGotResult = m_pAToD->GetMeasurement(m_nAToDChannel,1,1.0,dPHVoltage);
+	const double R1 = 10.0;//resistance in kohm of first resistor in divider
+	const double R2 = 10.0;//resistance in kohm of 2nd resistor in divider
+	double dPHVoltage=0.0;
+	double dSensorGain = (R1 + R2)/R2;
+	bool bGotResult = m_pAToD->GetMeasurement(m_nAToDChannel,1,dSensorGain,dPHVoltage);
+	//test
+	printf("dPHVoltage = %.3f\n",dPHVoltage);
+	//end test
 	if (bGotResult) {
 		double dCalGain = (m_phcal.dMidCalPH - m_phcal.dLowCalPH) / 
 			(m_phcal.dMidCalVoltage - m_phcal.dLowCalVoltage);

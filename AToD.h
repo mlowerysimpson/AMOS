@@ -9,7 +9,7 @@ typedef int pthread_mutex_t;
 
 
 #define NUM_ATOD_CHANNELS 4 //number of A to D channels available
-#define VREF 4.096//the voltage reference of the A to D --> 2.048 V at A to D corresponds to 10 V at input
+#define VREF 4.096//the voltage reference of the A to D
 #define MAX_COUNTS 32767//maximum number of counts for full-scale
 #define ATOD_NUM_TO_AVG 16//number of A to D samples to average for each measurement
 #pragma once

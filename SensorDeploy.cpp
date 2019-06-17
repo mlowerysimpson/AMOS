@@ -40,6 +40,7 @@ SensorDeploy::~SensorDeploy() {//destructor
 void SensorDeploy::OneTimeSetup() {//setup procedure to be performed once per power-cycle of the deployment servo motor
 	wiringPiSetupGpio();//need to call this before doing anything with GPIO
     pinMode(DEPLOYMENT_PULSE_PIN,OUTPUT);
+    digitalWrite(DEPLOYMENT_PULSE_PIN,0);//set initial output of pin to low
 }
 
 /**
@@ -72,33 +73,37 @@ void SensorDeploy::SaveSettings() {
 }
 
 void SensorDeploy::Deploy() {//move the servo motor to deploy the sensors into the water
+    pinMode(DEPLOYMENT_PULSE_PIN,OUTPUT);//make sure pin is set to output
     if (m_bDeployed) {
-        //already deployed, just make sure that servo is at the max angle
-        Pulse(MAX_SD_PULSE_TIME, 5000);//start thread to send pulses corresponding to maximum angle for 5 seconds
+        //already deployed, just make sure that servo is at the correct angle
+        Pulse(MIN_SD_PULSE_TIME, 5000);//send pulses corresponding to deployed angle for 5 seconds
     }
     else {//gradually move through increasing angles to swing the sensor armature into the water
-        for (int i=MIN_SD_PULSE_TIME;i<=MAX_SD_PULSE_TIME;i+=100) {
-            Pulse(i,100);//start thread to send pulses corresponding to a specific angle for 100 ms
+        for (int i=MAX_SD_PULSE_TIME;i>=MIN_SD_PULSE_TIME;i-=5) {
+            Pulse(i,10);//send pulses corresponding to a specific angle for 10 ms
         }
     }
     m_bDeployed = true;
     //save setting to prefs.txt file
     SaveSettings();
+    pinMode(DEPLOYMENT_PULSE_PIN,INPUT);//set pin to input to save power
 }
 
 void SensorDeploy::Retract() {//move the servo motor to retract the sensor from the water back onto the boat deck
+    pinMode(DEPLOYMENT_PULSE_PIN,OUTPUT);//make sure pin is set to output
     if (!m_bDeployed) {
-        //already retracted, just make sure that servo is at the min angle
-        Pulse(MIN_SD_PULSE_TIME, 5000);//start thread to send pulses corresponding to minimum angle for 5 seconds
+        //already retracted, just make sure that servo is at the correct angle
+        Pulse(MAX_SD_PULSE_TIME, 5000);//send pulses corresponding to retracted angle for 5 seconds
     }
     else {//gradually move through decreasing angles to swing the sensor armature out of the water and back onto the boat deck
-        for (int i=MAX_SD_PULSE_TIME;i>=MIN_SD_PULSE_TIME;i-=100) {
-            Pulse(i,100);//start thread to send pulses corresponding to a specific angle for 100 ms
+        for (int i=MIN_SD_PULSE_TIME;i<=MAX_SD_PULSE_TIME;i+=5) {
+            Pulse(i,10);//send pulses corresponding to a specific angle for 10 ms
         }
     }
     m_bDeployed = false;
     //save setting to prefs.txt file
     SaveSettings();
+    pinMode(DEPLOYMENT_PULSE_PIN,INPUT);//set pin to input to save power
 }
 
 void SensorDeploy::Pulse(int nPulseTimeMicroseconds, int nDurationMilliseconds) {//send pulses of width nPulseTimeMicroseconds for a duration of nDurationMilliseconds
