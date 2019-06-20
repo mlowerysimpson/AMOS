@@ -311,11 +311,16 @@ bool SensorDataFile::SendSensorTypes(int nHandle, bool bUseSerial) {
  */
 bool SensorDataFile::SendSensorData(int nSensorType, int nHandle, bool bUseSerial) {
 	//BOAT_DATA *pBoatData = BoatCommand::CreateBoatData(SUPPORTED_SENSOR_DATA);
-	BOAT_DATA *pBoatData = NULL;
+	BOAT_DATA *pBoatData = nullptr;
 	if (nSensorType==WATER_TEMP_DATA) {
 		TempSensor *pWaterSensor = GetWaterTempSensor();
-		if (pWaterSensor&&pWaterSensor->isOldData()) {
-			pWaterSensor->GetTemperature(m_fWaterTemp);
+		//test
+		if (pWaterSensor!=nullptr) {
+			if (pWaterSensor->isOldData()) {
+				if (!pWaterSensor->GetTemperature(m_fWaterTemp)) {
+					printf("error getting water temp.\n");
+				}
+			}
 		}
 		pBoatData = BoatCommand::CreateBoatData(WATER_TEMP_DATA_PACKET);
 		memcpy(pBoatData->dataBytes,&m_fWaterTemp,sizeof(float));

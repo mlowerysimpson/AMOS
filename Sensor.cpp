@@ -31,9 +31,9 @@ bool Sensor::isOldData() {
     unsigned int uiCurrentTime = millis();
     unsigned int uiTimeSinceLastReading = uiCurrentTime - m_uiLastCollectionTime;
     if (uiTimeSinceLastReading <= (RECENT_THRESHOLD_SEC*1000)) {
-        return true;
+        return false;
     }
-    return false;
+    return true;
 }
 
 /**

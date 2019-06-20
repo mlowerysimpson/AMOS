@@ -150,9 +150,12 @@ bool BoatCommand::SendBoatData(int nSocket, bool bUseSerial, BOAT_DATA *boatData
 	memcpy(outputBuf,&boatData->nPacketType,nNumToSend);
 	if (bUseSerial) {//using wireless serial port link
 #ifndef _WIN32
-		for (int i=0;i<nNumToSend;i++) {
-			serialPutchar(nSocket,outputBuf[i]);
+		if (write(nSocket,outputBuf,nNumToSend)!=nNumToSend) {
+			printf("serial write error\n");
 		}
+		//for (int i=0;i<nNumToSend;i++) {
+		//	serialPutchar(nSocket,outputBuf[i]);
+		//}
 #endif
 	}
 	else {//using network link
@@ -178,10 +181,13 @@ bool BoatCommand::SendBoatData(int nSocket, bool bUseSerial, BOAT_DATA *boatData
 		}
 		else
 		{
-			for (int i = 0; i < nNumToSend; i++)
-			{
-				serialPutchar(nSocket, outputBuf[i]);
+			if (write(nSocket,outputBuf,nNumToSend)!=nNumToSend) {
+				printf("serial write error\n");
 			}
+			//for (int i = 0; i < nNumToSend; i++)
+			//{
+			//	serialPutchar(nSocket, outputBuf[i]);
+			//}
 		}
 #endif
 	}
