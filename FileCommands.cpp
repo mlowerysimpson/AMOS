@@ -3,6 +3,7 @@
 #include "ShipLog.h"
 #include "filedata.h"
 #include "Util.h"
+#include "SensorDeploy.h"
 #include <sys/stat.h>
 #include <fstream>
 #include <algorithm>
@@ -590,6 +591,9 @@ int FileCommands::DoCommand(REMOTE_COMMAND *pCommand, pthread_mutex_t *command_m
 				m_pThrusters->Stop();
 				//pause for SENSOR_GRID_PAUSETIME_SEC seconds with thrusters off
 				unsigned int uiEndPauseTime = millis() + 1000*SENSOR_GRID_PAUSETIME_SEC;
+				SensorDeploy s(this->m_szRootFolder,false);
+				s.Deploy();
+				usleep(10000000);//wait ten seconds for sensors to stabilize in water
 				for (int k=0;k<nNumSamplesPerLocation;k++) {
 					while (millis()<uiEndPauseTime) {
 						usleep(1000000);//sleep for a second
@@ -602,12 +606,17 @@ int FileCommands::DoCommand(REMOTE_COMMAND *pCommand, pthread_mutex_t *command_m
 					//end test
 					m_pSensorDataFile->SaveDataAtLocation(dCurrentLatitude, dCurrentLongitude);
 				}
+				s.Retract();
 			}
 		}
 	}
 	else if (pCommand->nCommand==FC_SAMPLE) {
+		SensorDeploy s(this->m_szRootFolder,false);
 		m_pSensorDataFile->SetFilename((char *)pCommand->pDataBytes);
+		s.Deploy();
+		usleep(10000000);//wait ten seconds for sensors to stabilize in water
 		m_pSensorDataFile->CollectAndSaveDataNow();
+		s.Retract();
 	}
 	else if (pCommand->nCommand==FC_WAIT) {
 		int nIntervalHrs = (int)pCommand->pDataBytes[0];//number of hours in wait interval
