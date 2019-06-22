@@ -268,7 +268,7 @@ bool DiagnosticsSensor::EnterSleepMode(int nSleepTimeSec) {
  * @return char* header text to be used when saving diagnostics info to a sensor data file. The calling function should delete the returned pointer after it is finished with it.
  */
 char * DiagnosticsSensor::GetSensorFileHeader() {
-    char *szHeader = "Voltage(V), Current(A), RH(%%), BoatTemp2(degC), WirelessRX(dBm), Solar, ";
+    char *szHeader = "Voltage(V), Current(A), RH(%), BoatTemp2(degC), WirelessRX(dBm), Solar, ";
     int nHeaderLength = strlen(szHeader);
     char *szRetval = new char[nHeaderLength+1];
     strcpy(szRetval,szHeader);
