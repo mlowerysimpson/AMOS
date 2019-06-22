@@ -1,6 +1,5 @@
 //FileCommands.cpp
 #include "FileCommands.h"
-#include "SensorDeploy.h"
 #include "ShipLog.h"
 #include "filedata.h"
 #include "Util.h"
@@ -538,23 +537,23 @@ int FileCommands::DoCommand(REMOTE_COMMAND *pCommand, pthread_mutex_t *command_m
 		float fHeading=0;
 		memcpy(&fHeading,pCommand->pDataBytes,sizeof(float));
 		m_fLastHeadingCommandAngle = fHeading;
-		m_pNavigator->TurnToCompassHeading(fHeading,(void *)m_pThrusters,command_mutex,lastNetworkCommandTimeMS,pShipLog,m_bCancel);
+		m_pNavigator->TurnToCompassHeading(fHeading,(void *)m_pThrusters,command_mutex,lastNetworkCommandTimeMS,pShipLog,m_bCancel,LOW_PRIORITY);
 	}
 	else if (pCommand->nCommand==FC_FORWARD) {
 		int nTotalTimeSeconds=0;
 		memcpy(&nTotalTimeSeconds,pCommand->pDataBytes,sizeof(int));
-		m_pNavigator->DriveForwardForTime(nTotalTimeSeconds,MAX_THRUSTER_SPEED,m_fLastHeadingCommandAngle,(void *)m_pThrusters,command_mutex,lastNetworkCommandTimeMS,pShipLog,m_bCancel,true);
+		m_pNavigator->DriveForwardForTime(nTotalTimeSeconds,MAX_THRUSTER_SPEED,m_fLastHeadingCommandAngle,(void *)m_pThrusters,command_mutex,lastNetworkCommandTimeMS,pShipLog,m_bCancel,true,LOW_PRIORITY);
 	}
 	else if (pCommand->nCommand==FC_GPS_WAYPOINT) {
 		double dLatitude=0.0, dLongitude=0.0;
 		memcpy(&dLatitude,pCommand->pDataBytes,sizeof(double));
 		memcpy(&dLongitude,&pCommand->pDataBytes[8],sizeof(double));
-		m_pNavigator->DriveToLocation(dLatitude,dLongitude,(void *)m_pThrusters,command_mutex,lastNetworkCommandTimeMS,pShipLog,10,m_bCancel);
+		m_pNavigator->DriveToLocation(dLatitude,dLongitude,(void *)m_pThrusters,command_mutex,lastNetworkCommandTimeMS,pShipLog,10,m_bCancel,LOW_PRIORITY);
 	}
 	else if (pCommand->nCommand==FC_HOLD) {
 		int nTotalTimeSeconds=0;
 		memcpy(&nTotalTimeSeconds,pCommand->pDataBytes,sizeof(int));
-		m_pNavigator->HoldCurrentPosition(nTotalTimeSeconds,(void *)m_pThrusters,command_mutex,lastNetworkCommandTimeMS,pShipLog,m_bCancel);
+		m_pNavigator->HoldCurrentPosition(nTotalTimeSeconds,(void *)m_pThrusters,command_mutex,lastNetworkCommandTimeMS,pShipLog,m_bCancel,LOW_PRIORITY);
 	}
 	else if (pCommand->nCommand==FC_GRID_SAMPLE) {//collect sensor samples in a grid pattern
 		if (!m_pSensorDataFile) return 0;
@@ -586,13 +585,11 @@ int FileCommands::DoCommand(REMOTE_COMMAND *pCommand, pthread_mutex_t *command_m
 					//on odd numbered rows, move in the opposite EW direction, in order to collect the sample points as efficiently as possible.
 					dLongitude = dLongitudeCorner2 - j*dLongitudeIncrement;
 				}
-				m_pNavigator->DriveToLocation(dLatitude,dLongitude,(void *)m_pThrusters,command_mutex,lastNetworkCommandTimeMS,pShipLog,10,m_bCancel);
+				m_pNavigator->DriveToLocation(dLatitude,dLongitude,(void *)m_pThrusters,command_mutex,lastNetworkCommandTimeMS,pShipLog,10,m_bCancel,LOW_PRIORITY);
 				//turn off thrusters
 				m_pThrusters->Stop();
 				//pause for SENSOR_GRID_PAUSETIME_SEC seconds with thrusters off
 				unsigned int uiEndPauseTime = millis() + 1000*SENSOR_GRID_PAUSETIME_SEC;
-				SensorDeploy s(this->m_szRootFolder,false);
-				s.Deploy();
 				for (int k=0;k<nNumSamplesPerLocation;k++) {
 					while (millis()<uiEndPauseTime) {
 						usleep(1000000);//sleep for a second
@@ -605,16 +602,12 @@ int FileCommands::DoCommand(REMOTE_COMMAND *pCommand, pthread_mutex_t *command_m
 					//end test
 					m_pSensorDataFile->SaveDataAtLocation(dCurrentLatitude, dCurrentLongitude);
 				}
-				s.Retract();
 			}
 		}
 	}
 	else if (pCommand->nCommand==FC_SAMPLE) {
-		SensorDeploy s(this->m_szRootFolder,false);
 		m_pSensorDataFile->SetFilename((char *)pCommand->pDataBytes);
-		s.Deploy();
 		m_pSensorDataFile->CollectAndSaveDataNow();
-		s.Retract();
 	}
 	else if (pCommand->nCommand==FC_WAIT) {
 		int nIntervalHrs = (int)pCommand->pDataBytes[0];//number of hours in wait interval
