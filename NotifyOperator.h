@@ -25,7 +25,7 @@ public:
 	NotifyOperator();//constructor
 	~NotifyOperator();//destructor
 	
-	bool IssueNotification(char *msgText, void *pShipLog);//send out text(s) and email(s) to configured recipients
+	bool IssueNotification(char *msgText, char *szSubject, void *pShipLog);//send out text(s) and email(s) to configured recipients
 
 private:
 	//data
@@ -51,6 +51,6 @@ private:
 	static size_t payload_source(void *ptr, size_t size, size_t nmemb, void *userp);
 	bool LoadConfigInfo();//load configuration data from prefs.txt file, return true if file could be successfully opened and read
 	bool SendText(char *msgText,void *pShipLog);//send text message to one or more recipients
-	bool SendEmail(char *msgText,void *pShipLog);//send email message to one or more recipients
+	bool SendEmail(char *msgText, char *szSubject, void *pShipLog);//send email message to one or more recipients
 };
 

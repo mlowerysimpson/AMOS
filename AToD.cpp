@@ -19,7 +19,7 @@
  * @brief Construct a new AToD::AToD object for collecting data from the ADS1115 chip
  * 
  * @param i2c_filename the name of the i2c port to use, ex: "/dev/i2c-1"
- * @param ucAddress the 7-bit i2c address to use for the ADS1115
+ * @param ucAddress the 7-bit i2c address to use for the ADS1115.
  * @param pShipLog pointer to a ShipLog object used for logging error messages, etc.
  * @param i2c_mutex used for controlling access to the i2c bus
  */

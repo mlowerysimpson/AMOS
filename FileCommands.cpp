@@ -543,7 +543,12 @@ int FileCommands::DoCommand(REMOTE_COMMAND *pCommand, pthread_mutex_t *command_m
 	else if (pCommand->nCommand==FC_FORWARD) {
 		int nTotalTimeSeconds=0;
 		memcpy(&nTotalTimeSeconds,pCommand->pDataBytes,sizeof(int));
-		m_pNavigator->DriveForwardForTime(nTotalTimeSeconds,MAX_THRUSTER_SPEED,m_fLastHeadingCommandAngle,(void *)m_pThrusters,command_mutex,lastNetworkCommandTimeMS,pShipLog,m_bCancel,true,LOW_PRIORITY);
+		float fCurrentHeading = (float)m_pNavigator->m_imuData.heading;
+		if (fCurrentHeading==0) {//may not have valid heading yet
+			m_pNavigator->CollectCompassData(pShipLog);
+			fCurrentHeading = (float)m_pNavigator->m_imuData.heading;
+		}
+		m_pNavigator->DriveForwardForTime(nTotalTimeSeconds,MAX_THRUSTER_SPEED,fCurrentHeading,(void *)m_pThrusters,command_mutex,lastNetworkCommandTimeMS,pShipLog,m_bCancel,true,LOW_PRIORITY);
 	}
 	else if (pCommand->nCommand==FC_GPS_WAYPOINT) {
 		double dLatitude=0.0, dLongitude=0.0;

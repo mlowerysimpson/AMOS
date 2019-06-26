@@ -24,6 +24,7 @@
  */
 Navigation::Navigation(double dMagDeclination, pthread_mutex_t *i2c_mutex) {
 	m_currentGPSData=nullptr;
+	m_nMaxPriority = LOW_PRIORITY;
 	m_i2c_mutex = i2c_mutex;
 	m_uiPreviousTrimTime=0;
 	m_fEstimatedCompassError=0;
@@ -283,14 +284,25 @@ double Navigation::ComputeHeadingDif(double dHeading1Deg,double dHeading2Deg) {/
 	return dDif;
 }
 
-//TurnToCompassHeading: turn boat to desired compass heading (fHeading)
+//TurnToCompassHeading: 
 //fHeading = the desired heading to turn to in degrees
 //pThrusters = void pointer to previously created Thruster object for driving the propeller(s)
 //command_mutex = mutex controlling access to propellers
 //lastNetworkCommandTimeMS = pointer to time in milliseconds since program started that the last network command was issued
 //pShipLog = pointer to ShipLog object that is used for recording program errors and some data for the current program session
 //bCancel = pointer to boolean flag that is "true" whenever this function should be exited as soon as possible (ex: if the program is ending)
-void Navigation::TurnToCompassHeading(float fHeading,void *pThrusters,pthread_mutex_t *command_mutex, unsigned int *lastNetworkCommandTimeMS, void *pShipLog, bool *bCancel) {//turn boat to desired heading
+/**
+ * @brief turn boat to desired compass heading (fHeading)
+ * 
+ * @param fHeading the desired heading to turn to in degrees.
+ * @param pThrusters void pointer to previously created Thruster object for driving the propeller(s).
+ * @param command_mutex mutex controlling access to propellers.
+ * @param lastNetworkCommandTimeMS pointer to time in milliseconds since program started that the last network command was issued.
+ * @param pShipLog pointer to ShipLog object that is used for recording program errors and some data for the current program session.
+ * @param bCancel pointer to boolean flag that is "true" whenever this function should be exited as soon as possible (ex: if the program is ending).
+ * @param nPriority the priority level of the calling thread that requested this command
+ */
+ void Navigation::TurnToCompassHeading(float fHeading,void *pThrusters,pthread_mutex_t *command_mutex, unsigned int *lastNetworkCommandTimeMS, void *pShipLog, bool *bCancel, int nPriority) {//turn boat to desired heading
 	float MAX_TURN_SPEED = 5;
 	const float CLOSE_ENOUGH_DEG = 10;//try to get heading to match up within this amount
 	float fSpeedLeft=0, fSpeedRight=0;//left and right thruster speeds (start at slow speed)
@@ -301,6 +313,10 @@ void Navigation::TurnToCompassHeading(float fHeading,void *pThrusters,pthread_mu
 		MAX_TURN_SPEED = MAX_RECOMMENDED_AIRPROP_SPEED;
 		bAirBoat = true;
 	}
+	MAX_TURN_SPEED = min(MAX_TURN_SPEED,(float)this->m_dMaxSpeed);
+	if (MAX_TURN_SPEED<=0) {
+		return;//must  be in lower power mode, just exit without doing anything
+	}
 	ShipLog *pLog = (ShipLog *)pShipLog;
 	if (!m_imu) {
 		pLog->LogEntry((char *)"No compass data yet.\n",true);
@@ -308,6 +324,8 @@ void Navigation::TurnToCompassHeading(float fHeading,void *pThrusters,pthread_mu
 	}
 	if (fHeading>360) fHeading-=360;
 	else if (fHeading<0) fHeading+=360;
+
+	CheckPriority(nPriority);//check to see if there are no other higher priority threads trying to execute a navigation command at the same time
 	
 	//test
 	sprintf(sMsg,"Turning to heading = %.1f\n",fHeading);
@@ -324,6 +342,7 @@ void Navigation::TurnToCompassHeading(float fHeading,void *pThrusters,pthread_mu
 		//wait for a valid sample of heading data
 		usleep(10000);
 	}
+	CheckPriority(nPriority);//check to see if there are no other higher priority threads trying to execute a navigation command at the same time
 	pthread_mutex_lock(command_mutex);
 	pThrust->Stop();
 	pthread_mutex_unlock(command_mutex);
@@ -356,6 +375,7 @@ void Navigation::TurnToCompassHeading(float fHeading,void *pThrusters,pthread_mu
 		while ((millis() - *lastNetworkCommandTimeMS)<10000&&!*bCancel) {
 			usleep(1000000);//delay executing thruster actions after recent network commands
 		}
+		CheckPriority(nPriority);//check to see if there are no other higher priority threads trying to execute a navigation command at the same time
 		pthread_mutex_lock(command_mutex);
 		//test
 		//sprintf(sMsg,"fSpeedLeft = %.1f, fSpeedRight = %.1f\n",fSpeedLeft,fSpeedRight);
@@ -434,22 +454,31 @@ void Navigation::IncrementTurningSpeed(float &fSpeedLeft,float &fSpeedRight,floa
 	}
 }
 
-//DriveForwardForTime: drive boat forward for the specified time in seconds
-//nTotalTimeSeconds = the total length of time in seconds that the boat will be driven forward
-//fMaxSpeed = the desired maximum speed for the thrusters
-//fHeadingDirection = the target direction in which we are to move forward (corresponds to pointing direction of boat, actual track covered by vary depending on wind and current)
-//pThrusters = void pointer to previously created Thruster object for driving the propeller(s)
-//command_mutex = mutex controlling access to propellers
-//lastNetworkCommandTimeMS = time in milliseconds since program started that the last network command was issued
-//pShipLog = pointer to ShipLog object that is used for recording program errors and some data for the current program session
-//bCancel = pointer to boolean variable that is "true" if this function should be exited as soon as possible
-//bStopWhenDone = true if the thrusters should be stopped after driving has completed (i.e. after nTotalTimeSeconds has elapsed)
-void Navigation::DriveForwardForTime(int nTotalTimeSeconds, float fMaxSpeed, float fHeadingDirection, void *pThrusters, pthread_mutex_t *command_mutex, 
-									 unsigned int *lastNetworkCommandTimeMS, void *pShipLog, bool *bCancel, bool bStopWhenDone) {
+
+/**
+ * @brief drive boat forward for the specified time in seconds
+ * 
+ * @param nTotalTimeSeconds the total length of time in seconds that the boat will be driven forward
+ * @param fMaxSpeed the desired maximum speed for the thrusters
+ * @param fHeadingDirection the target direction in which we are to move forward (corresponds to pointing direction of boat, actual track covered by vary depending on wind and current)
+ * @param pThrusters void pointer to previously created Thruster object for driving the propeller(s)
+ * @param command_mutex mutex controlling access to propellers
+ * @param lastNetworkCommandTimeMS time in milliseconds since program started that the last network command was issued
+ * @param pShipLog pointer to ShipLog object that is used for recording program errors and some data for the current program session
+ * @param bCancel pointer to boolean variable that is "true" if this function should be exited as soon as possible
+ * @param bStopWhenDone true if the thrusters should be stopped after driving has completed (i.e. after nTotalTimeSeconds has elapsed)
+ * @param nPriority the priority level of the calling thread that requested this command
+ */
+ void Navigation::DriveForwardForTime(int nTotalTimeSeconds, float fMaxSpeed, float fHeadingDirection, void *pThrusters, pthread_mutex_t *command_mutex, 
+									 unsigned int *lastNetworkCommandTimeMS, void *pShipLog, bool *bCancel, bool bStopWhenDone, int nPriority) {
 	Thruster *pThrust = (Thruster *)pThrusters;
+	if (m_dMaxSpeed<=0) {
+		//lower power mode, don't do anything
+		return;
+	}
 	if (pThrust->isAirBoat()) {
 		DriverAirboatForwardForTime(nTotalTimeSeconds,fMaxSpeed,fHeadingDirection,pThrusters,command_mutex,
-			lastNetworkCommandTimeMS, pShipLog, bCancel, bStopWhenDone);
+			lastNetworkCommandTimeMS, pShipLog, bCancel, bStopWhenDone, nPriority);
 		return;
 	}
 	ShipLog *pLog = (ShipLog *)pShipLog;
@@ -467,6 +496,7 @@ void Navigation::DriveForwardForTime(int nTotalTimeSeconds, float fMaxSpeed, flo
 			usleep(1000000);//delay executing thruster actions after recent network commands
 		}
 	}
+	CheckPriority(nPriority);
 	if (command_mutex!=nullptr) {
 		pthread_mutex_lock(command_mutex);
 	}
@@ -502,6 +532,7 @@ void Navigation::DriveForwardForTime(int nTotalTimeSeconds, float fMaxSpeed, flo
 					usleep(1000000);//delay executing thruster actions after recent network commands
 				}
 			}
+			CheckPriority(nPriority);
 			if (command_mutex!=nullptr) {
 				pthread_mutex_lock(command_mutex);
 			}
@@ -517,6 +548,7 @@ void Navigation::DriveForwardForTime(int nTotalTimeSeconds, float fMaxSpeed, flo
 		}
 	}
 	if (bStopWhenDone) {
+		CheckPriority(nPriority);
 		if (command_mutex!=nullptr) {
 			pthread_mutex_lock(command_mutex);
 		}
@@ -545,19 +577,27 @@ char *Navigation::GetStatusLogText() {
 	return retval;
 }
 
-//DriveToLocation: drive boat to the specified GPS location
-//dLatitude: the latitude in degrees of the GPS destination
-//dLongitude: the longitude in degrees of the GPS destination
-//pThrusters = void pointer to previously created Thruster object for driving the propeller(s)
-//command_mutex = mutex controlling access to propellers
-//lastNetworkCommandTimeMS = time in milliseconds since program started that the last network command was issued
-//pShipLog = pointer to ShipLog object that is used for recording program errors and some data for the current program session
-//nInterpAmount = amount to interpolate (straight-line) between current point and desired destination (use 1 for no interpolation)
-//bCancel = pointer to boolean flag that controls when to cancel drivign to the location
-void Navigation::DriveToLocation(double dLatitude, double dLongitude, void *pThrusters, pthread_mutex_t *command_mutex, unsigned int *lastNetworkCommandTimeMS, void *pShipLog, int nInterpAmount, bool *bCancel) {
+/**
+ * @brief drive boat to the specified GPS location.
+ * 
+ * @param dLatitude the latitude in degrees of the GPS destination.
+ * @param dLongitude the longitude in degrees of the GPS destination.
+ * @param pThrusters void pointer to previously created Thruster object for driving the propeller(s).
+ * @param command_mutex mutex controlling access to propellers.
+ * @param lastNetworkCommandTimeMS time in milliseconds since program started that the last network command was issued.
+ * @param pShipLog pointer to ShipLog object that is used for recording program errors and some data for the current program session.
+ * @param nInterpAmount amount to interpolate (straight-line) between current point and desired destination (use 1 for no interpolation).
+ * @param bCancel pointer to boolean flag that controls when to cancel drivign to the location.
+ * @param nPriority the priority level of the calling thread that requested this command.
+ */
+ void Navigation::DriveToLocation(double dLatitude, double dLongitude, void *pThrusters, pthread_mutex_t *command_mutex, unsigned int *lastNetworkCommandTimeMS, void *pShipLog, int nInterpAmount, bool *bCancel, int nPriority) {
 	const float MAX_ALLOWED_HEADING_ERROR = 20;//need to do a full stop turn when the course of the GPS track deviates more than this from the desired track
 	const unsigned int COMPASS_REORIENT_TIME = 60000;//minimum number of ms to go without doing a full magnetic compass check 
 	double dMaxSpeed = m_dMaxSpeed;//normally the maximum speed will be MAX_THRUSTER_SPEED, except when the boat gets close to its destination, or when battery charge is getting low, then the speed is reduced
+	if (dMaxSpeed<=0.0) {
+		//must be in low power mode, not enough power to drive anywhere
+		return;
+	}
 	char sMsg[256];
 	ShipLog *pLog = (ShipLog *)pShipLog;
 	//test
@@ -575,6 +615,7 @@ void Navigation::DriveToLocation(double dLatitude, double dLongitude, void *pThr
 	if (*bCancel==true) return;
 	
 	double dDistToDestination = Navigation::ComputeDistBetweenPts(dLatitude, dLongitude, m_dLatitude, m_dLongitude);//use GPS locations of 2 points to get the distance between 2 points 
+	CheckPriority(nPriority);
 	if (nInterpAmount>1) {
 		ResetNavSamples();//reset the buffer that keeps track of historical gps locations & compass headings
 		if (dDistToDestination<500) {//make sure that we are not interpolating to sub-destinations that are less than 50 m from one another
@@ -589,8 +630,9 @@ void Navigation::DriveToLocation(double dLatitude, double dLongitude, void *pThr
 			if (*bCancel) {
 				break;
 			}
+			CheckPriority(nPriority);
 			DriveToLocation(dStartLatitude + (i+1)*dLatitudeIncrement, dStartLongitude + (i+1)*dLongitudeIncrement,
-				pThrusters, command_mutex, lastNetworkCommandTimeMS, pShipLog, 1, bCancel);
+				pThrusters, command_mutex, lastNetworkCommandTimeMS, pShipLog, 1, bCancel, nPriority);
 		}
 		return;
 	}
@@ -599,7 +641,7 @@ void Navigation::DriveToLocation(double dLatitude, double dLongitude, void *pThr
 	double dDistToDest=0.0;
 	
 	double dInitialHeading = ComputeHeadingAndDistToDestination(dLatitude,dLongitude,dDistToDest);//use current GPS location to get initial heading and distance to destination
-	TurnToCompassHeading((float)dInitialHeading, pThrusters, command_mutex, lastNetworkCommandTimeMS, pShipLog, bCancel);//turn boat to desired heading
+	TurnToCompassHeading((float)dInitialHeading, pThrusters, command_mutex, lastNetworkCommandTimeMS, pShipLog, bCancel, nPriority);//turn boat to desired heading
 	unsigned int uiStartTime = millis();
 	float fLSpeed=max(pThrust->GetLSpeed(),(float)2);//get the current speed of the left propeller 
 	float fRSpeed=max(pThrust->GetRSpeed(),(float)2);//get the current speed of the right propeller
@@ -614,6 +656,9 @@ void Navigation::DriveToLocation(double dLatitude, double dLongitude, void *pThr
 		}*/
 		if (pThrust->isAirBoat()) {
 			fAirSpeed+=.1;
+			if (fAirSpeed>dMaxSpeed) {
+				fAirSpeed = dMaxSpeed;
+			}
 		}
 		else {
 			fLSpeed+=.1;
@@ -629,12 +674,15 @@ void Navigation::DriveToLocation(double dLatitude, double dLongitude, void *pThr
 		
 		unsigned int uiTimeNow = millis();
 		AddNavSample(uiTimeNow);//add current navigation data to the buffer of samples
-		if (isBoatStuck()) {
+		if (isBoatStuck()&&dMaxSpeed>0) {
 			if (pThrust->isAirBoat()) {
-				float fRandomAngle = TurnToRandomAngle(pThrusters, command_mutex, lastNetworkCommandTimeMS, pShipLog, bCancel);
-				this->DriveForwardForTime(10,MAX_RECOMMENDED_AIRPROP_SPEED, fRandomAngle, pThrusters, command_mutex, lastNetworkCommandTimeMS, pShipLog, bCancel, true);
+				float fRandomAngle = TurnToRandomAngle(pThrusters, command_mutex, lastNetworkCommandTimeMS, pShipLog, bCancel, nPriority);
+				sprintf(sMsg,"Boat is stuck, turning to random angle of %.1f deg.\n",fRandomAngle);
+				pLog->LogEntry(sMsg,true);
+				this->DriveForwardForTime(10,MAX_RECOMMENDED_AIRPROP_SPEED, fRandomAngle, pThrusters, command_mutex, lastNetworkCommandTimeMS, pShipLog, bCancel, true, nPriority);
 			}
 			else {
+				CheckPriority(nPriority);
 				ExecuteRandomThrust(pThrusters, command_mutex, lastNetworkCommandTimeMS, pShipLog, bCancel);//execute a short burst of random propeller thrust to try to become un-stuck
 			}
 			ResetNavSamples();//reset the buffer that keeps track of historical gps locations & compass headings
@@ -643,12 +691,13 @@ void Navigation::DriveToLocation(double dLatitude, double dLongitude, void *pThr
 		float fHeadingError = GetHeadingError(dDesiredHeading, pShipLog);//use mix of current compass reading and historical compass and GPS data to determine the current heading error of the boat
 		if (fabs(fHeadingError)>MAX_ALLOWED_HEADING_ERROR&&((uiTimeNow - m_uiLastCompassCheckTime)>COMPASS_REORIENT_TIME)) {
 			float fDesiredCompassHeading = m_imuData.heading - fHeadingError;//note desired compass heading for the boat can in general differ from the desired GPS track due to wind and water currents
-			TurnToCompassHeading(fDesiredCompassHeading, pThrusters, command_mutex, lastNetworkCommandTimeMS, pShipLog, bCancel);//turn boat to desired heading to correct GPS track
+			TurnToCompassHeading(fDesiredCompassHeading, pThrusters, command_mutex, lastNetworkCommandTimeMS, pShipLog, bCancel,nPriority);//turn boat to desired heading to correct GPS track
 			fLSpeed=2;
 			fRSpeed=2;
 			fAirSpeed=2;
 		}
 		else {//heading is close enough so that just a minor trimming of direction can be used
+			CheckPriority(nPriority);
 			if (pThrust->isAirBoat()) {//air boat
 				TrimAirRudder(fAirRudderAngle,fHeadingError,(float)dDesiredHeading,pShipLog);	
 			}
@@ -659,6 +708,7 @@ void Navigation::DriveToLocation(double dLatitude, double dLongitude, void *pThr
 		while ((millis() - *lastNetworkCommandTimeMS)<10000&&!*bCancel) {
 			usleep(1000000);//delay executing thruster actions after recent network commands
 		}
+		CheckPriority(nPriority);
 		pthread_mutex_lock(command_mutex);
 		if (pThrust->isAirBoat()) {
 			pThrust->SetAirPropSpeedAndRudderAngle(fAirSpeed,fAirRudderAngle);
@@ -674,6 +724,7 @@ void Navigation::DriveToLocation(double dLatitude, double dLongitude, void *pThr
 	while ((millis() - *lastNetworkCommandTimeMS)<10000&&!*bCancel) {
 		usleep(1000000);//delay executing thruster actions after recent network commands
 	}
+	CheckPriority(nPriority);
 	pthread_mutex_lock(command_mutex);
 	pThrust->Stop();
 	pthread_mutex_unlock(command_mutex);
@@ -789,14 +840,18 @@ void Navigation::TrimSpeeds(float &fLSpeed, float &fRSpeed, float fHeadingError,
 	}
 }
 
-//HoldCurrentPosition: hold the current GPS location for the specified period of time (in seconds)
-//nTotalTimeSeconds = length of time to hold the current GPS location in seconds
-//pThrusters = void pointer to previously created Thruster object for driving the propeller(s)
-//command_mutex = mutex controlling access to propellers
-//lastNetworkCommandTimeMS = time in milliseconds since program started that the last network command was issued
-//pShipLog = pointer to ShipLog object that is used for recording program errors and some data for the current program session
-//bCancel = pointer to boolean variable that is "true" whenever this function should be canceled as soon as possible
-void Navigation::HoldCurrentPosition(int nTotalTimeSeconds, void *pThrusters, pthread_mutex_t *command_mutex, unsigned int *lastNetworkCommandTimeMS, void *pShipLog, bool *bCancel) {
+/**
+ * @brief hold the current GPS location for the specified period of time (in seconds).
+ * 
+ * @param nTotalTimeSeconds length of time to hold the current GPS location in seconds.
+ * @param pThrusters void pointer to previously created Thruster object for driving the propeller(s).
+ * @param command_mutex mutex controlling access to propellers.
+ * @param lastNetworkCommandTimeMS time in milliseconds since program started that the last network command was issued.
+ * @param pShipLog pointer to ShipLog object that is used for recording program errors and some data for the current program session.
+ * @param bCancel pointer to boolean variable that is "true" whenever this function should be canceled as soon as possible.
+ * @param nPriority the priority level of the calling thread that requested this command.
+ */
+ void Navigation::HoldCurrentPosition(int nTotalTimeSeconds, void *pThrusters, pthread_mutex_t *command_mutex, unsigned int *lastNetworkCommandTimeMS, void *pShipLog, bool *bCancel, int nPriority) {
 	//holding cuurent position 
 	double dInitialLatitude = m_dLatitude;
 	double dInitialLongitude = m_dLongitude;
@@ -805,7 +860,7 @@ void Navigation::HoldCurrentPosition(int nTotalTimeSeconds, void *pThrusters, pt
 	while ((millis() - uiInitialTime)<(nTotalTimeSeconds*1000)&&!*bCancel) {
 		double dHeadingToStart = ComputeHeadingAndDistToDestination(dInitialLatitude, dInitialLongitude, dDistFromInitial);
 		if (dDistFromInitial>CLOSE_ENOUGH_M) {
-			DriveToLocation(dInitialLatitude, dInitialLongitude, pThrusters, command_mutex, lastNetworkCommandTimeMS, pShipLog, 1, bCancel);
+			DriveToLocation(dInitialLatitude, dInitialLongitude, pThrusters, command_mutex, lastNetworkCommandTimeMS, pShipLog, 1, bCancel, nPriority);
 		}
 		usleep(1000000);
 	}
@@ -1204,13 +1259,13 @@ double Navigation::ComputeAvgHeading(double dHeading1Deg, double dHeading2Deg) {
  */
 void Navigation::SetPowerMode(int nPowerMode,double dVoltage,void *pShipLog) {
 	//comment out the following 3 lines to enable switching of power mode (based on battery voltge level)
-	if (1==1) {
-		return;
-	}
+	//if (1==1) {
+	//	return;
+	//}
 	ShipLog *pLog = (ShipLog *)pShipLog;
 	char sMsg[256];
 	if (nPowerMode==LOW_POWER_MODE) {
-		sprintf(sMsg,"Setting lower power mode, voltage = %.2f V\n",dVoltage);
+		sprintf(sMsg,"Setting low power mode, voltage = %.2f V\n",dVoltage);
 		m_dMaxSpeed=0.0;
 		pLog->LogEntry(sMsg,true);
 	}
@@ -1244,18 +1299,19 @@ double Navigation::GetLongitude() {
 /**
  * @brief drive airboat forward for the specified time in seconds
  * 
- * @param nTotalTimeSeconds the total length of time in seconds that the boat will be driven forward
- * @param fMaxSpeed the desired maximum speed for the thrusters
- * @param fHeadingDirection the target direction in which we are to move forward (corresponds to pointing direction of boat, actual track covered by vary depending on wind and current)
- * @param pThrusters void pointer to previously created Thruster object for driving the propeller(s)
- * @param command_mutex mutex controlling access to propellers
- * @param lastNetworkCommandTimeMS time in milliseconds since program started that the last network command was issued
- * @param pShipLog pointer to ShipLog object that is used for recording program errors and some data for the current program session
- * @param bCancel pointer to boolean variable that is "true" if this function should be exited as soon as possible
- * @param bStopWhenDone true if the thrusters should be stopped after driving has completed (i.e. after nTotalTimeSeconds has elapsed)
+ * @param nTotalTimeSeconds the total length of time in seconds that the boat will be driven forward.
+ * @param fMaxSpeed the desired maximum speed for the thrusters.
+ * @param fHeadingDirection the target direction in which we are to move forward (corresponds to pointing direction of boat, actual track covered by vary depending on wind and current).
+ * @param pThrusters void pointer to previously created Thruster object for driving the propeller(s).
+ * @param command_mutex mutex controlling access to propellers.
+ * @param lastNetworkCommandTimeMS time in milliseconds since program started that the last network command was issued.
+ * @param pShipLog pointer to ShipLog object that is used for recording program errors and some data for the current program session.
+ * @param bCancel pointer to boolean variable that is "true" if this function should be exited as soon as possible.
+ * @param bStopWhenDone true if the thrusters should be stopped after driving has completed (i.e. after nTotalTimeSeconds has elapsed).
+ * @param nPriority the priority level of the calling thread that requested this command.
  */
 void Navigation::DriverAirboatForwardForTime(int nTotalTimeSeconds, float fMaxSpeed, float fHeadingDirection, void *pThrusters, pthread_mutex_t *command_mutex, 
-									 unsigned int *lastNetworkCommandTimeMS, void *pShipLog, bool *bCancel, bool bStopWhenDone) {
+									 unsigned int *lastNetworkCommandTimeMS, void *pShipLog, bool *bCancel, bool bStopWhenDone, int nPriority) {
 	Thruster *pThrust = (Thruster *)pThrusters;
 	ShipLog *pLog = (ShipLog *)pShipLog;
 	unsigned int ui_startTime = millis();
@@ -1272,6 +1328,7 @@ void Navigation::DriverAirboatForwardForTime(int nTotalTimeSeconds, float fMaxSp
 			usleep(1000000);//delay executing thruster actions after recent network commands
 		}
 	}
+	CheckPriority(nPriority);
 	if (command_mutex!=nullptr) {
 		pthread_mutex_lock(command_mutex);
 	}
@@ -1298,6 +1355,7 @@ void Navigation::DriverAirboatForwardForTime(int nTotalTimeSeconds, float fMaxSp
 					usleep(1000000);//delay executing thruster actions after recent network commands
 				}
 			}
+			CheckPriority(nPriority);
 			if (command_mutex!=nullptr) {
 				pthread_mutex_lock(command_mutex);
 			}
@@ -1314,6 +1372,7 @@ void Navigation::DriverAirboatForwardForTime(int nTotalTimeSeconds, float fMaxSp
 		}
 	}
 	if (bStopWhenDone) {
+		CheckPriority(nPriority);
 		if (command_mutex!=nullptr) {
 			pthread_mutex_lock(command_mutex);
 		}
@@ -1324,7 +1383,7 @@ void Navigation::DriverAirboatForwardForTime(int nTotalTimeSeconds, float fMaxSp
 	}
 }
 
-float Navigation::TurnToRandomAngle(void *pThrusters, pthread_mutex_t *command_mutex, unsigned int *lastNetworkCommandTimeMS, void *pShipLog, bool *bCancel) {//turns boat to a random angle
+float Navigation::TurnToRandomAngle(void *pThrusters, pthread_mutex_t *command_mutex, unsigned int *lastNetworkCommandTimeMS, void *pShipLog, bool *bCancel, int nPriority) {//turns boat to a random angle
 	char sMsg[256];
 	ShipLog *pLog = (ShipLog *)pShipLog;
 	float fRandomAngle=(float)(360*((float)rand()) / RAND_MAX);//get a random angle between 0 and 360
@@ -1334,7 +1393,7 @@ float Navigation::TurnToRandomAngle(void *pThrusters, pthread_mutex_t *command_m
 	sprintf(sMsg,"setting random heading angle: %.1f deg\n",fRandomAngle);
 	pLog->LogEntry(sMsg,true);
 	//end test
-	this->TurnToCompassHeading(fRandomAngle,pThrusters, command_mutex, lastNetworkCommandTimeMS, pShipLog, bCancel);
+	this->TurnToCompassHeading(fRandomAngle,pThrusters, command_mutex, lastNetworkCommandTimeMS, pShipLog, bCancel, nPriority);
 	pthread_mutex_unlock(command_mutex);
 }
 
@@ -1382,7 +1441,7 @@ void Navigation::TrimAirRudder(float &fAirRudderAngle,float fHeadingError,float 
 		fAirRudderAngle = MAX_TRIM_RUDDER_ANGLE;
 	}
 	//test
-	printf("fHeadingError = %.1f, fAirRudderAngle = %.1f\n",fHeadingError,fAirRudderAngle);
+	//printf("fHeadingError = %.1f, fAirRudderAngle = %.1f\n",fHeadingError,fAirRudderAngle);
 	//end test
 }	
 
@@ -1395,3 +1454,22 @@ void Navigation::TrimAirRudder(float &fAirRudderAngle,float fHeadingError,float 
 bool Navigation::HaveValidGPS() {//return true if we have obtained at least one sample of valid GPS data
 	return this->m_bGotValidGPSData;
 }
+
+void Navigation::CheckPriority(int nPriority) {//check to see if there are no other higher priority threads trying to execute a navigation command at the same time
+	//just wait until priority level is low enough to continue
+	while (nPriority < m_nMaxPriority) {
+		usleep(100000);//pause for 100 ms
+	}
+	if (nPriority > m_nMaxPriority) {
+		m_nMaxPriority = nPriority;
+	}
+}
+
+/**
+ * @brief call this function after high priority navigation command(s) are completed
+ * 
+ */
+ void Navigation::HighPriorityCommandFinished() {
+	m_nMaxPriority = LOW_PRIORITY;
+}
+

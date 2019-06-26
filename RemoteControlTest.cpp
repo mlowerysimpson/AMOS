@@ -66,6 +66,8 @@ bool g_bObjectPictures;//whether or not to take a picture whenever an obstacle i
 bool g_bLiDARSafetyMode;//flag is true if thrusters should be switched off whenever a nearby obstacle is detected using liDAR
 
 //other global parameters
+char g_rootFolder[PATH_MAX];//root folder where this program starts from
+vector <char *> g_commandLineParams;//command line parameters for this program
 unsigned int g_lastNetworkCommandTime;//last network command time (for controlling thrusters) in ms
 vector <REMOTE_COMMAND *> g_remoteCommands;//series of remote commands to execute in the order that they arrive
 char g_remote_ipaddr[32];//the remote IP address 
@@ -272,6 +274,31 @@ void EnterSleepMode(int nWaitTimeSec) {
 		printf("No ship diagnostics object, cannot enter low power mode.\n");
 		return;
 	}
+	//make sure prefs.txt file is set for auto-start so that this program can wake itself back up properly
+	char prefsFilename[PATH_MAX];
+	char startupParams[1024];//startup parameters to include on the command line when starting this program
+	int nNumStartupParams = g_commandLineParams.size();
+	
+	sprintf(prefsFilename,"%s/prefs.txt",g_rootFolder);
+	filedata prefsFile(prefsFilename);
+	prefsFile.writeData("[startup]","autostart",1);
+	if (nNumStartupParams>0) {
+		strcpy(startupParams,g_commandLineParams[0]);
+		bool bContinueParam = false;//set to true if one of the parameters is the "continue" flag
+		for (int i=1;i<nNumStartupParams;i++) {
+			strcat(startupParams,(char *)" ");
+			strcat(startupParams,g_commandLineParams[i]);
+			if (strcmp(g_commandLineParams[i],(char*)"continue")==0) {
+				bContinueParam = true;
+			}
+		}
+		if (g_fileCommands!=nullptr&&!bContinueParam) {
+			//need to add a "continue" parameter so that when the program restarts it will try to resume at the same place in the file commands where it left off
+			strcat(startupParams,(char *)" continue");
+		}
+		prefsFile.writeData("[startup]","params",startupParams);	
+	}
+
 	//exits this program and puts AMOS into a low-power state in which only the RFU220SU is powered up
 	if (!g_shipdiagnostics->EnterSleepMode(nWaitTimeSec)) {
 		printf("Error trying to enter low power mode.\n");
@@ -286,9 +313,8 @@ void EnterSleepMode(int nWaitTimeSec) {
 
 void *sensorCollectionFunction(void *pParam) {
 	const double BATT_VOLTAGE_CUTOFF = 6.0;//if the battery voltage is below this amount, then we can assume that the user must have switched off the +12V power supply
-	const double HALF_POWER_VOLTAGE = 12.0;//if the battery voltage falls below this level, then we should reduce the maximum speed by half to avoid using too much power
 	const double FULL_POWER_VOLTAGE = 13.0;//if the battery voltage rises above this level, then we can assume that the battery has become fully charged and the boat is capable of full-speed operation
-	const double LOW_POWER_VOLTAGE = 11.0;//if the battery voltage falls below this level, then there is not much charge left, need to conserve power so shutoff power to thrusters and hope for sunlight!
+	const double LOW_POWER_VOLTAGE = 11.33;//if the battery voltage falls below this level, then there is not much charge left, need to conserve power so shutoff power to thrusters and hope for sunlight!
 	unsigned int uiLastBattVoltageMeasurement = 0;//time in ms of last battery voltage measurement
 	unsigned int uiLastLiDARMeasurement = 0;//time in ms of last LiDAR measurement
 	g_bSensorThreadRunning = true;
@@ -346,11 +372,17 @@ void *sensorCollectionFunction(void *pParam) {
 					}
 				}
 				if (g_navigator&&!g_bVoltageSwitchedOff) {
-					if (dBattVoltage<LOW_POWER_VOLTAGE) {//charge levels are getting pretty low, need to shut down thrusters and hope for sunshine
+					if (dBattVoltage<LOW_POWER_VOLTAGE&&dBattVoltage>9) {//charge levels are getting pretty low, need to shut down thrusters, send alarm notification, go into low power mode, and hope for sunshine
+						//turn off thrusters
 						g_navigator->SetPowerMode(LOW_POWER_MODE,dBattVoltage,&g_shiplog);
-					}
-					else if (dBattVoltage<HALF_POWER_VOLTAGE) {//charge levels are getting a bit low, better to operate at half-speed to extend battery time
-						g_navigator->SetPowerMode(HALF_POWER_MODE,dBattVoltage,&g_shiplog);
+						//send alarm notification that power levels are low
+						char szAlarmMsg[256];
+						sprintf(szAlarmMsg,"Low battery alarm! Voltage = %.2f V. Pos = %.6f, %.6f, Entering low power for one hour.\n",
+							dBattVoltage,g_navigator->GetLatitude(),g_navigator->GetLongitude());
+						char *szSubject = (char *)"Low Battery Alarm!";
+						g_notifier.IssueNotification(szAlarmMsg,szSubject,(void *)&g_shiplog);
+						//enter low power mode for an hour
+						EnterSleepMode(3600);
 					}
 					else if (dBattVoltage>=FULL_POWER_VOLTAGE) {//charge levels are pretty full, can enable full-speed operation
 						g_navigator->SetPowerMode(FULL_POWER_MODE,dBattVoltage,&g_shiplog);
@@ -730,8 +762,7 @@ void GetDataLoggingPreferences() {//get data logging preferences from prefs.txt 
 }
 
 int main(int argc, const char * argv[]) {
-	char rootFolder[PATH_MAX];
-	getcwd(rootFolder,PATH_MAX);
+	getcwd(g_rootFolder,PATH_MAX);
 	g_shipdiagnostics = nullptr;
 	g_sensorDataFile = nullptr;
 	g_serPort = nullptr;
@@ -790,7 +821,7 @@ int main(int argc, const char * argv[]) {
 
 	if (argc>=3) {
 		char *commandFilename = (char *)argv[2];
-		g_fileCommands = new FileCommands(rootFolder,commandFilename,g_navigator,g_thrusters,g_sensorDataFile,&g_bCancelFunctions);
+		g_fileCommands = new FileCommands(g_rootFolder,commandFilename,g_navigator,g_thrusters,g_sensorDataFile,&g_bCancelFunctions);
 		if (!g_fileCommands->m_bFileOK) {
 			printf("Error trying to open or parse file: %s\n",commandFilename);
 			return 2;
@@ -804,6 +835,10 @@ int main(int argc, const char * argv[]) {
 		g_fileCommands->PrintOutCommandList();
 		//end test
 	}
+	//store command line parameters
+	for (int i=1;i<argc;i++) {
+		g_commandLineParams.push_back((char *)argv[i]);
+	}
 
 	if (Util::isSerPort(argv[1])) {
 		char *serPort = (char *)argv[1];
@@ -813,15 +848,39 @@ int main(int argc, const char * argv[]) {
 		char *remoteIPAddr = (char *)argv[1];
 		StartNetworkClientThread(remoteIPAddr);//start thread to open client that connects to the boat server
 	}
-
+	printf("Press \'q\' to exit...\n");
 	StartGPSThread();//start thread for receiving GPS data
+	//execute this loop until we get some GPS data before doing anything else
+	bool bGotGPSData = false;
+	while (g_bKeepGoing&&!bGotGPSData) {
+		REMOTE_COMMAND *pRC = GetNextCommand();
+		if (pRC!=nullptr) {
+			ExecuteCommand(pRC);
+			RemoteCommand::DeleteCommand(pRC);//finished with command now, so delete it
+		}
+		//if (_kbhit()) {
+		int nQuitCode = Util::getch_noblock();
+		if (nQuitCode==113) {
+			g_shiplog.LogEntry((char *)"\'q\' key pressed to exit program.\n",false);
+			g_bKeepGoing = false;
+			g_bCancelFunctions = true;
+		}
+		if (g_shipdiagnostics!=nullptr) {
+			g_shipdiagnostics->ActivityPulse();//send pulse out activity pin to indicate that the program is still running
+		}
+		if (g_navigator->GetLatitude()!=0.0||g_navigator->GetLongitude()!=0.0) {
+			bGotGPSData=true;
+		}
+	}
+	
+
 	StartDataCollectionThread();//start thread for receiving sensor data
 	if (g_fileCommands!=nullptr) {
 		StartFileCommandsThread();//start thread for executing commands from a text file
 	}
 
 	//loop receiving commands until ESC key is pressed
-	printf("Press \'q\' to exit...\n");
+	
 	while (g_bKeepGoing) {
 		REMOTE_COMMAND *pRC = GetNextCommand();
 		if (pRC!=nullptr) {

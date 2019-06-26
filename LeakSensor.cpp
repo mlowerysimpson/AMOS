@@ -51,7 +51,8 @@ bool LeakSensor::HasSentLeakNotification() {
 bool LeakSensor::SendLeakNotification(void *pShipLog, NotifyOperator *pNotifier) {
 	ShipLog *pLog = (ShipLog *)pShipLog;
 	char *sLeakMessageText = (char *)"WARNING ALERT: A leak has been detected by one or more sensors!";
-	m_bSentLeakNotification = pNotifier->IssueNotification(sLeakMessageText, pShipLog);
+	char *szSubject = (char *)"AMOS Leak Detected!";
+	m_bSentLeakNotification = pNotifier->IssueNotification(sLeakMessageText, szSubject, pShipLog);
 	return m_bSentLeakNotification;
 }
 

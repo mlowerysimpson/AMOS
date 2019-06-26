@@ -68,10 +68,16 @@ NotifyOperator::~NotifyOperator() {
 	}
 }
 
-//IssueNotification: send out text(s) and email(s) to configured recipients
-//msgText = the notification text to send
-//returns true if successful, false otherwise
-bool NotifyOperator::IssueNotification(char *msgText, void *pShipLog) {
+/**
+ * @brief send out text(s) and email(s) to configured recipients
+ * 
+ * @param msgText the notification text to send
+ * @param szSubject the subject text to include in the email message (if used)
+ * @param pShipLog void pointer to the ship's log file
+ * @return true if notification was issued successfully
+ * @return false if an error occurred
+ */
+bool NotifyOperator::IssueNotification(char *msgText, char *szSubject, void *pShipLog) {
 	ShipLog *pLog = (ShipLog *)pShipLog;
 	if (!m_bLoadedConfigInfo) {
 		pLog->LogEntry((char *)"Error, unable to load email / text configuration info from prefs.txt file.\n",true);
@@ -85,7 +91,7 @@ bool NotifyOperator::IssueNotification(char *msgText, void *pShipLog) {
 		}
 	}
 	if (m_bSendEmail) {
-		if (!SendEmail(msgText,pLog)) {
+		if (!SendEmail(msgText,szSubject,pLog)) {
 			pLog->LogEntry((char *)"Error, failed to send email.\n",true);
 			bRetval=false;
 		}
@@ -127,7 +133,7 @@ bool NotifyOperator::SendText(char *msgText,void *pShipLog) {//send text message
 	return true;
 }
 
-bool NotifyOperator::SendEmail(char *msgText,void *pShipLog) {//send email message to one or more recipients
+bool NotifyOperator::SendEmail(char *msgText,char *szSubjectText, void *pShipLog) {//send email message to one or more recipients
 	ShipLog *pLog = (ShipLog *)pShipLog;
 	char sMsg[256];
 	char szDateTime[128];//used to hold the current date and time
@@ -155,7 +161,7 @@ bool NotifyOperator::SendEmail(char *msgText,void *pShipLog) {//send email messa
 	g_payload_text[0] = szDateTime;
 	g_payload_text[1] = email_recipients;//,//"To: " TO "\r\n",
 	g_payload_text[2] = sender;//"From: " FROM " (Example User)\r\n",
-	g_payload_text[3] = (char *)"Subject: AMOS Leak Detected!\r\n";
+	sprintf(g_payload_text[3], "%s\r\n",szSubjectText);
 	g_payload_text[4] = (char *)"\r\n"; /* empty line to divide headers from body, see RFC5322 */ 
 	g_payload_text[5] = msgText;
 	g_payload_text[6] =	(char *)"\r\n";
