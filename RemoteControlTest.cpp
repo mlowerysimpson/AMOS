@@ -850,9 +850,10 @@ int main(int argc, const char * argv[]) {
 	}
 	printf("Press \'q\' to exit...\n");
 	StartGPSThread();//start thread for receiving GPS data
-	//execute this loop until we get some GPS data before doing anything else
-	bool bGotGPSData = false;
-	while (g_bKeepGoing&&!bGotGPSData) {
+	//execute this loop until we get some accurate GPS data before doing anything else
+	bool bGotAccurateGPSData = false;
+	const int REQUIRED_NUM_SATELLITES = 4;//required number of GPS satellites for accurate position data
+	while (g_bKeepGoing&&!bGotAccurateGPSData) {
 		REMOTE_COMMAND *pRC = GetNextCommand();
 		if (pRC!=nullptr) {
 			ExecuteCommand(pRC);
@@ -868,9 +869,19 @@ int main(int argc, const char * argv[]) {
 		if (g_shipdiagnostics!=nullptr) {
 			g_shipdiagnostics->ActivityPulse();//send pulse out activity pin to indicate that the program is still running
 		}
-		if (g_navigator->GetLatitude()!=0.0||g_navigator->GetLongitude()!=0.0) {
-			bGotGPSData=true;
+		double dLatitude = g_navigator->GetLatitude();
+		double dLongitude = g_navigator->GetLongitude();
+		if (dLatitude!=0.0||dLongitude!=0.0) {
+			char sMsg[256];
+			int nNumSatellitesVisible = g_navigator->GetNumVisibleSatellites();//the number of currently visible GPS satellites
+			int nNumSatellitesUsed = g_navigator->GetNumSatellitesUsed();//the number of GPS satellites that are used for the position calculation
+			sprintf(sMsg,"pos = %.6f, %.6f, satellites visible = %d, satellites used = %d.\n",dLatitude,dLongitude,nNumSatellitesVisible,nNumSatellitesUsed);
+			g_shiplog.LogEntry(sMsg,true);
+			if (nNumSatellitesUsed>=REQUIRED_NUM_SATELLITES) {
+				bGotAccurateGPSData = true;
+			}
 		}
+		usleep(1000000);//pause for 1 second
 	}
 	
 

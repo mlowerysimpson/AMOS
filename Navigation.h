@@ -23,6 +23,10 @@
 #define HALF_POWER_MODE 2//in this mode of operation the maximum thruster speed is reduced by half in order to conserver power
 #define FULL_POWER_MODE 3//normal mode of operation, full thruster speed is possible
 
+//priority levels for navigation commands
+#define LOW_PRIORITY 0
+#define HIGH_PRIORITY 1
+
 struct NAV_DATA {//structure used for keeping track of historical GPS and compass readings
 	double dLatitude;//latitude of gps reading
 	double dLongitude;//longitude of gps reading
@@ -51,6 +55,9 @@ public:
 	bool HaveValidGPS();//return true if we have obtained at least one sample of valid GPS data
 	double GetLatitude();//return the current latitude of the boat (as determined by GPS) in degrees
 	double GetLongitude();//return the current longitude of the boat (as determined by GPS) in degrees 
+	double GetGPSAccuracyM();//return the accuracy (uncertainty) of most recent GPS reading in m
+	int GetNumVisibleSatellites();//return the number of currently visible GPS satellites
+	int GetNumSatellitesUsed();//return the number of satellites that are used for the position calculation
 	double GetBoatTemp();//return the temperature of the interior of the boat (comes from magnetometer chip temperature sensor)
 	void SetPowerMode(int nPowerMode,double dVoltage,void *pShipLog);//set the mode of operation and maximum thruster speed possible
 	bool driftedFromEmergencyStop();//return true if we have drifted away from the emergency stopping point
@@ -60,18 +67,20 @@ public:
 	bool CollectCompassData(void *pShipLog);//collects a sample of compass data
 	bool SendCompassData(int nHandle, bool bUseSerial);//send most recent compass data out network socket or serial port connection
 	void ShowCompassError(const char *szErrorText);//show error text pertaining to the compass module... just display one error message per program session
-	void TurnToCompassHeading(float fHeading,void *pThrusters,pthread_mutex_t *command_mutex, unsigned int *lastNetworkCommandTimeMS, void *pShipLog, bool *bCancel);//turn boat to desired compass heading
-	void DriveForwardForTime(int nTotalTimeSeconds, float fMaxSpeed, float fHeadingDirection, void *pThrusters, pthread_mutex_t *command_mutex, unsigned int *lastNetworkCommandTimeMS, void *pShipLog, bool *bCancel, bool bStopWhenDone);//drive boat forward for the specified time in seconds
-	void DriveToLocation(double dLatitude, double dLongitude, void *pThrusters, pthread_mutex_t *command_mutex, unsigned int *lastNetworkCommandTimeMS, void *pShipLog, int nInterpAmount, bool *bCancel);//drive boat to the specified GPS location
-	void HoldCurrentPosition(int nTotalTimeSeconds, void *pThrusters, pthread_mutex_t *command_mutex, unsigned int *lastNetworkCommandTimeMS, void *pShipLog, bool *bCancel);//hold the current GPS location
+	void TurnToCompassHeading(float fHeading,void *pThrusters,pthread_mutex_t *command_mutex, unsigned int *lastNetworkCommandTimeMS, void *pShipLog, bool *bCancel, int nPriority);//turn boat to desired compass heading
+	void DriveForwardForTime(int nTotalTimeSeconds, float fMaxSpeed, float fHeadingDirection, void *pThrusters, pthread_mutex_t *command_mutex, unsigned int *lastNetworkCommandTimeMS, void *pShipLog, bool *bCancel, bool bStopWhenDone, int nPriority);//drive boat forward for the specified time in seconds
+	void DriveToLocation(double dLatitude, double dLongitude, void *pThrusters, pthread_mutex_t *command_mutex, unsigned int *lastNetworkCommandTimeMS, void *pShipLog, int nInterpAmount, bool *bCancel, int nPriority);//drive boat to the specified GPS location
+	void HoldCurrentPosition(int nTotalTimeSeconds, void *pThrusters, pthread_mutex_t *command_mutex, unsigned int *lastNetworkCommandTimeMS, void *pShipLog, bool *bCancel, int nPriority);//hold the current GPS location
 	bool isDataReady();//return true if compass data is available
 	char *GetStatusLogText();//returns text corresponding to the ship's current navigation status, calling application is responsible for deleting the returned text (if non-null)
 	static double ComputeHeadingDif(double dHeading1Deg,double dHeading2Deg);//compute difference between 2 heading angles in degrees
 	void ExecuteLeakResponse(int nLeakResponseType, void *pShipLog);//special emergency function for getting to shore as quickly as possible
 	void TrimSpeeds(float &fLSpeed, float &fRSpeed, float fHeadingError, float fTargetHeading, void *pShipLog);//adjust speeds of propellers in order to fine-tune the direction that the boat is moving while at speed in the forward direction
+	void HighPriorityCommandFinished();//call this function after high priority navigation command(s) are completed
 
 private:
 	//data
+	int m_nMaxPriority;//the maximum priority for a navigation instruction that is currently being executed, if a thread issues a navigation command with less priority than this, it will pause until the higher priority thread is finished and m_nMaxPriority becomes a lower value
 	pthread_mutex_t *m_i2c_mutex;//mutex controlling access to the i2c bus
 	bool m_bGotValidGPSData;//flag indicates whether or not valid GPS data has ever been received
 	float m_fEstimatedCompassError;//estimate of compass error, relative to GPS track
@@ -88,6 +97,9 @@ private:
 	bool m_bInitializedGPS;//flag is true if GPS receiver was initialized successfully
 	double m_dLatitude;//latitude of most recent GPS reading
 	double m_dLongitude;//longitude of most recent GPS reading
+	double m_dGPSAccuracyM;//accuracy (uncertainty) of most recent GPS reading
+	int m_nNumGPSSatellitesInView;//number of GPS satellites in view
+	int m_nNumGPSSatellitesUsed;//number of GPS satellites that are used in the position calculation
 	double m_dSpeed;//speed of boat (as measured by GPS) in m/s
 	double m_dTrack;//track that the boat is following (in degrees relative to true north, as determined by GPS)
 	time_t *m_gpsTime;//the time in seconds since Jan 1, 1970 when the most recent GPS sample was received
@@ -97,12 +109,13 @@ private:
 	double m_dFilteredYawRate;//rate at which heading of boat is changing (in degrees per second, filtered as an average of the last second of data)
 
 	//functions
+	void CheckPriority(int nPriority);//check to see if there are no other higher priority threads trying to execute a navigation command at the same time
 	void TrimAirRudder(float &fAirRudderAngle,float fHeadingError,float fDesiredHeading,void *pShipLog);//fine-tune air rudder angle in order to correct any heading error
-	float TurnToRandomAngle(void *pThrusters, pthread_mutex_t *command_mutex, unsigned int *lastNetworkCommandTimeMS, void *pShipLog, bool *bCancel);//turns boat to a random angle
+	float TurnToRandomAngle(void *pThrusters, pthread_mutex_t *command_mutex, unsigned int *lastNetworkCommandTimeMS, void *pShipLog, bool *bCancel, int nPriority);//turns boat to a random angle
 	static double ComputeAvgHeading(double dHeading1Deg, double dHeading2Deg);//return average value of 2 headings in degrees
 	static double ComputeDistBetweenPts(double dLatitudeDeg1, double dLongitudeDeg1, double dLatitudeDeg2, double dLongitudeDeg2);//use GPS locations of 2 points to get the distance between 2 points 
 	void DriverAirboatForwardForTime(int nTotalTimeSeconds, float fMaxSpeed, float fHeadingDirection, void *pThrusters, pthread_mutex_t *command_mutex, 
-									 unsigned int *lastNetworkCommandTimeMS, void *pShipLog, bool *bCancel, bool bStopWhenDone);
+									 unsigned int *lastNetworkCommandTimeMS, void *pShipLog, bool *bCancel, bool bStopWhenDone, int nPriority);
 	double CalculateIntegratedHeadingError(double dTargetHeading, void *pShipLog);//get integral of heading error over the last COMPASS_BUFSIZE samples (~ 2 seconds)
 	float FindEstimatedCompassError(void *pShipLog);//look at compass and GPS data for the last SAMPLE_BUFSIZE samples to estimate the amount of compass error; provides an estimate of how far off the compass is from the GPS track
 	float GetHeadingError(double dDesiredHeading, void *pShipLog);//use mix of current compass reading and historical compass and GPS data to determine the current heading error of the boat

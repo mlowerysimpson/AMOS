@@ -44,6 +44,9 @@ Navigation::Navigation(double dMagDeclination, pthread_mutex_t *i2c_mutex) {
 	m_dMaxSpeed=MAX_THRUSTER_SPEED;
 	m_dLatitude=0.0;
 	m_dLongitude=0.0;
+	m_dGPSAccuracyM=0.0;
+	m_nNumGPSSatellitesInView = 0;
+	m_nNumGPSSatellitesUsed = 0;
 	m_dSpeed=0.0;
 	m_dTrack=0.0;
 	m_dYawRate = 0.0;
@@ -159,13 +162,21 @@ bool Navigation::CollectGPSData(void *pShipLog, bool *bKeepGoing) {//collects a 
 				//output something to log file every 10 seconds without fix
 				unsigned int uiTimeNow = millis();
 				if ((uiTimeNow-uiStart)>10000) {
+					char sMsg[128];
 					uiStart = uiTimeNow;
-					pLog->LogEntry((char *)"Waiting for GPS fix.\n",true);
+					m_nNumGPSSatellitesInView = gpsd_data->satellites_visible;
+					m_nNumGPSSatellitesUsed = gpsd_data->satellites_used;
+					sprintf(sMsg,"Waiting for GPS fix, %d satellites visible, %d satellites used.\n",m_nNumGPSSatellitesInView,m_nNumGPSSatellitesUsed);
+					pLog->LogEntry(sMsg,true);
 				}
 		}
 		timestamp_t ts = gpsd_data->fix.time;
 		m_dLatitude = gpsd_data->fix.latitude;
 		m_dLongitude = gpsd_data->fix.longitude;
+		m_dGPSAccuracyM = gpsd_data->epe;
+		m_nNumGPSSatellitesInView = gpsd_data->satellites_visible;//number of satellites in view
+		m_nNumGPSSatellitesUsed = gpsd_data->satellites_used;
+		
 		m_dSpeed = gpsd_data->fix.speed;
 		m_dTrack = gpsd_data->fix.track;
 		//convert GPSD's timestamp_t into time_t
@@ -1473,3 +1484,30 @@ void Navigation::CheckPriority(int nPriority) {//check to see if there are no ot
 	m_nMaxPriority = LOW_PRIORITY;
 }
 
+/**
+ * @brief get the accuracy (uncertainty) of latitude readings in m
+ * 
+ * @return A value corresponding to the uncertainty of latitude measurements in m. This value may be zero if no valid gps readings have been obtained yet.
+ */
+double Navigation::GetGPSAccuracyM() {
+	return m_dGPSAccuracyM;
+}
+
+
+/**
+ * @brief get the number of currently visible GPS satellites
+ * 
+ * @return The number of currently visible GPS satellites.
+ */
+int Navigation::GetNumVisibleSatellites() {//return the number of currently visible GPS satellites
+	return m_nNumGPSSatellitesInView;
+}
+
+/**
+ * @brief get the number of GPS satellites that are used for the position calculation
+ * 
+ * @return the number of GPS satellites that are used for the position calculation
+ */
+int Navigation::GetNumSatellitesUsed() {
+	return m_nNumGPSSatellitesUsed;
+}
