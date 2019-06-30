@@ -164,9 +164,16 @@ bool Navigation::CollectGPSData(void *pShipLog, bool *bKeepGoing) {//collects a 
 				if ((uiTimeNow-uiStart)>10000) {
 					char sMsg[128];
 					uiStart = uiTimeNow;
-					m_nNumGPSSatellitesInView = gpsd_data->satellites_visible;
-					m_nNumGPSSatellitesUsed = gpsd_data->satellites_used;
-					sprintf(sMsg,"Waiting for GPS fix, %d satellites visible, %d satellites used.\n",m_nNumGPSSatellitesInView,m_nNumGPSSatellitesUsed);
+					if (gpsd_data==NULL) {
+						m_nNumGPSSatellitesInView=0;
+						m_nNumGPSSatellitesUsed=0;
+						strcpy(sMsg,(char *)"Waiting for GPS fix, 0 satellites visible, 0 satellites used.\n");
+					}
+					else {
+						m_nNumGPSSatellitesInView = gpsd_data->satellites_visible;
+						m_nNumGPSSatellitesUsed = gpsd_data->satellites_used;
+						sprintf(sMsg,"Waiting for GPS fix, %d satellites visible, %d satellites used.\n",m_nNumGPSSatellitesInView,m_nNumGPSSatellitesUsed);
+					}
 					pLog->LogEntry(sMsg,true);
 				}
 		}
