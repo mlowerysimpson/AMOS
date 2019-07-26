@@ -15,7 +15,15 @@
 #include <vector>
 #include "Sensor.h"
 
-#define HUMIDITY_PIN 7 //GPIO pin used for one-wire interface
+
+//possible locations of humidity sensors
+#define CPUBOX 0
+#define BATTERYBOX 1
+
+//GPIO pins used to connect to humidity sensors
+#define HUMIDITY_CPUBOX_PIN 7//GPIO pin used for one-wire interface to humidity sensor in CPU box
+#define HUMIDITY_BATTERYBOX_PIN 8 //GPIO pin used for one-wire interface to humidity sensor in battery box
+
 #define HUMIDITY_SAMPLE_INTERVAL_SEC 5 //the interval (in seconds) between samples of the humidity sensor
 
 using namespace std;
@@ -28,22 +36,26 @@ class HumiditySensor : public Sensor {//class used for measuring humidity from D
 public:
 	HumiditySensor();//constructor
 	~HumiditySensor();//destructor
-    bool GetHumidity(float &fHumidity);//return the most recently collected humidity value
-    bool GetTemperature(float &fTemperature);//return the most recently collected temperature value
-    bool CollectHumidityData();//collect data from the DHT22 temperature and humidity sensor.
+    bool GetHumidity(float &fHumidity, int nLocation);//return the most recently collected humidity value at a particular location
+    bool GetTemperature(float &fTemperature, int nLocation);//return the most recently collected temperature value at a particular location
+    bool CollectHumidityData(int nLocation);//collect data from the DHT22 temperature and humidity sensors.
     bool m_bExitThread;//flag is used to tell humidity data collection thread when to stop.
     bool m_bHumidityThreadRunning;//flag is used to 
 
 private:
-    float m_fHumidity;//humidity expressed as an RH percentage from 0 to 100
-    float m_fTemperature;//temperature of the sensor in degrees C
-    bool m_bGotValidData;//flag becomes true after at least one valid reading of temperature and humidity has been obtained
+    float m_fCPUHumidity;//humidity inside CPU box expressed as an RH percentage from 0 to 100
+    float m_fBatteryHumidity;//humidity inside battery box expressed as an RH percentage from 0 to 100
+    float m_fCPUTemperature;//temperature of the humidity sensor inside the CPU box in degrees C
+    float m_fBatteryTemperature;//temperature of the humidity sensor inside the battery box in degrees C
+    bool m_bGotValidCPUData;//flag becomes true after at least one valid reading of temperature and humidity has been obtained from the CPU box
+    bool m_bGotValidBatteryData;//flag becomes true after at least one valid reading of temperature and humidity has been obtained from the battery box
 #ifndef _WIN32
     pthread_t m_threadId;//thread id for getting humidity / temperature data from DHT22
     pthread_mutex_t m_threadMutex;//mutex for making sure data obtained from this class is correct
 #endif
 
+    bool gotValidData(int nLocation);//return true if at least one sample of valid temperature / humidity data has been obtained for this location
     void StopHumidityThread();//stop thread for getting humidity data
-    bool CollectDHT22RawData(unsigned short *data);//collect raw data from DHT22 sensor
+    bool CollectDHT22RawData(unsigned short *data, int nLocation);//collect raw data from DHT22 sensor
 
 };

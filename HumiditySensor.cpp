@@ -14,10 +14,11 @@ void *humidityFunction(void *pParam) {//function receives commands from base sta
     pSensor->m_bExitThread = false;
     pSensor->m_bHumidityThreadRunning = true;
     while (!pSensor->m_bExitThread) {
-        pSensor->CollectHumidityData();
+	    pSensor->CollectHumidityData(CPUBOX);
+		pSensor->CollectHumidityData(BATTERYBOX);
         unsigned int uiWaitTime = millis() + HUMIDITY_SAMPLE_INTERVAL_SEC * 1000;
         while (!pSensor->m_bExitThread&&millis() < uiWaitTime) {
-            delay(100);
+            delay(500);
         }
     }
     pSensor->m_bHumidityThreadRunning=false;
@@ -29,7 +30,8 @@ void *humidityFunction(void *pParam) {//function receives commands from base sta
  * 
  */
 HumiditySensor::HumiditySensor() : Sensor(nullptr) {//constructor
-    m_bGotValidData = false;
+    m_bGotValidCPUData = false;//flag becomes true after at least one valid reading of temperature and humidity has been obtained from the CPU box
+    m_bGotValidBatteryData = false;//flag becomes true after at least one valid reading of temperature and humidity has been obtained from the battery box
     m_threadId = 0;
     /* Uncomment the following lines if the WiringPi initialization has not already been performed elsewhere in your code
     // GPIO Initialization
@@ -43,8 +45,10 @@ HumiditySensor::HumiditySensor() : Sensor(nullptr) {//constructor
     m_threadMutex = PTHREAD_MUTEX_INITIALIZER;
     m_bExitThread = false;//flag is used to tell humidity data collection thread when to stop.
     m_bHumidityThreadRunning = false;//flag is used to 
-    m_fHumidity = 0;//humidity expressed as an RH percentage from 0 to 100
-    m_fTemperature = 0;//temperature of the sensor in degrees C
+    this->m_fBatteryHumidity = 0;
+	this->m_fCPUHumidity = 0;
+	this->m_fBatteryTemperature = 0;
+	this->m_fCPUTemperature = 0;
     //start thread for collecting data from DHT22 sensor
     int nError = pthread_create(&m_threadId, NULL, &humidityFunction, (void *)this);
 	if (nError!=0) {
@@ -58,22 +62,32 @@ HumiditySensor::HumiditySensor() : Sensor(nullptr) {//constructor
  */
 HumiditySensor::~HumiditySensor() {//destructor
     StopHumidityThread();//stop thread for getting humidity data
-	pinMode(HUMIDITY_PIN, INPUT);//make sure one-wire interface is set back to input
+	pinMode(HUMIDITY_BATTERYBOX_PIN, INPUT);//make sure one-wire interface is set back to input
+	pinMode(HUMIDITY_CPUBOX_PIN, INPUT);//make sure one-wire interface is set back to input
 }
 
 /**
  * @brief return the most recently collected humidity value. The thread which collects humidity (and temperature) data is successful about 75% of the time, so the value returned should be current to within some small muiltiple of HUMIDITY_SAMPLE_INTERVAL_SEC seconds.
  * 
  * @param fHumidity returned value of the humidity, expressed as a relative humidity percentage from 0 to 100.
+ * @param nLocation location of humidity sensor (should be one of CPUBOX or BATTERYBOX)
  * @return true if at least one valid humidity reading has been obtained.
  * @return false if no valid humidity readings have been obtained yet.
  */
-bool HumiditySensor::GetHumidity(float &fHumidity) {
-    if (!m_bGotValidData) {
+bool HumiditySensor::GetHumidity(float &fHumidity, int nLocation) {
+    if (!gotValidData(nLocation)) {
         return false;
     }
     pthread_mutex_lock(&m_threadMutex);
-    fHumidity = m_fHumidity;
+	if (nLocation==CPUBOX) {
+		fHumidity = m_fCPUHumidity;
+	}
+	else if (nLocation==BATTERYBOX) {
+    	fHumidity = m_fBatteryHumidity;
+	}
+	else {//unknown location
+		fHumidity = 0;
+	}
     pthread_mutex_unlock(&m_threadMutex);
     return true;
 }
@@ -82,15 +96,24 @@ bool HumiditySensor::GetHumidity(float &fHumidity) {
  * @brief return the most recently collected temperature value. The thread which collects humidity (and temperature) data is successful about 75% of the time, so the value returned should be current to within some small muiltiple of HUMIDITY_SAMPLE_INTERVAL_SEC seconds.
  * 
  * @param fTemperature returned value of the temperature (in degrees C). 
+ * @param nLocation location of humidity / temperature sensor (should be one of CPUBOX or BATTERYBOX)
  * @return true if at least one valid temperature reading has been obtained.
  * @return false if no valid temperature readings have been obtained yet
  */
-bool HumiditySensor::GetTemperature(float &fTemperature) {//
-    if (!m_bGotValidData) {
+bool HumiditySensor::GetTemperature(float &fTemperature, int nLocation) {//
+    if (!gotValidData(nLocation)) {
         return false;
     }
     pthread_mutex_lock(&m_threadMutex);
-    fTemperature = m_fTemperature;
+	if (nLocation==CPUBOX) {
+    	fTemperature = this->m_fCPUTemperature;
+	}
+	else if (nLocation==BATTERYBOX) {
+		fTemperature = this->m_fBatteryTemperature;
+	}
+	else {//unknown location
+		fTemperature = 0;
+	}
     pthread_mutex_unlock(&m_threadMutex);
     return true;   
 }
@@ -113,15 +136,25 @@ void HumiditySensor::StopHumidityThread() {//stop thread for getting humidity da
 }
 
 
-bool HumiditySensor::CollectDHT22RawData(unsigned short *data) {
+bool HumiditySensor::CollectDHT22RawData(unsigned short *data, int nLocation) {
     unsigned short val = 0x00;
 	unsigned short signal_length = 0;
 	unsigned short val_counter = 0;
 	unsigned short loop_counter = 0;
+	int nPin = 0;
+	if (nLocation==CPUBOX) {
+		nPin = HUMIDITY_CPUBOX_PIN;
+	}
+	else if (nLocation==BATTERYBOX) {
+		nPin = HUMIDITY_BATTERYBOX_PIN;
+	}
+	else {
+		return false;//unknown location
+	}
     while (1)
 	{
 		// Count only HIGH signal
-		while (digitalRead(HUMIDITY_PIN) == HIGH)
+		while (digitalRead(nPin) == HIGH)
 		{
 			signal_length++;
 			
@@ -137,7 +170,6 @@ bool HumiditySensor::CollectDHT22RawData(unsigned short *data) {
 		if (signal_length > 0)
 		{
 			loop_counter++;	// HIGH signal counting
-
 			// The DHT22 sends a lot of unstable signals(?)
 			// So extended the counting range.
 			if (signal_length < 10)
@@ -160,6 +192,7 @@ bool HumiditySensor::CollectDHT22RawData(unsigned short *data) {
 			else
 			{
 				// Unstable signal
+				//printf("unstable signal = %u\n",signal_length);
 				return false;
 			}
 			signal_length = 0;	// Initialize signal length for next signal
@@ -187,49 +220,90 @@ bool HumiditySensor::CollectDHT22RawData(unsigned short *data) {
 
 /**
  * @brief collect data from the DHT22 temperature and humidity sensor (based on code from Hyun Wook Choi: https://github.com/ccoong7/DHT22)
- * 
+ * @nLocation the location from where to collect data (either CPUBOX or BATTERYBOX)
  * @return true if successful
  * @return false if there was a problem (typically communications error on one-wire interface) getting data from the DHT22
  */
-bool HumiditySensor::CollectHumidityData() {
+bool HumiditySensor::CollectHumidityData(int nLocation) {
     unsigned short data[5] = {0, 0, 0, 0, 0};
 	short checksum=0;
-    pinMode(HUMIDITY_PIN, OUTPUT);//set Pi pin for output
+	int nPin = 0;
+	if (nLocation==CPUBOX) {
+		nPin = HUMIDITY_CPUBOX_PIN;
+	}
+	else if (nLocation==BATTERYBOX) {
+		nPin = HUMIDITY_BATTERYBOX_PIN;
+	}
+	else {
+		return false;//unknown location
+	}
+    pinMode(nPin, OUTPUT);//set Pi pin for output
 	// Send out start signal
-	digitalWrite(HUMIDITY_PIN, LOW);
+	digitalWrite(nPin, LOW);
 	delay(20);					// Stay LOW for 5~30 milliseconds
-	pinMode(HUMIDITY_PIN, INPUT);		// 'INPUT' equals 'HIGH' level. And signal read mode
+	digitalWrite(nPin, HIGH);
+	pinMode(nPin, INPUT);		// 'INPUT' equals 'HIGH' level. And signal read mode
 
-    if (CollectDHT22RawData(data)) {
+    if (CollectDHT22RawData(data, nLocation)) {
 		// The sum is maybe over 8 bit like this: '0001 0101 1010'.
 		// Remove the '9 bit' data using AND operator.
 		checksum = (data[0] + data[1] + data[2] + data[3]) & 0xFF;
-		
 		// If Check-sum data is correct display humidity and temperature
 		if (data[4] == checksum) {
 			// * 256 is the same thing '<< 8' (shift).
 			pthread_mutex_lock(&m_threadMutex);
-			m_fHumidity = ((data[0] * 256) + data[1]) / 10.0;
+			float fHumidity = ((data[0] * 256) + data[1]) / 10.0;
+			float fTemperature = 0;
 			
 			bool bPosTemperature = false;
 			if ((data[2]&0x80)==0) {
 				bPosTemperature = true;//temperature is positive
 			}
 			if (bPosTemperature) {
-				m_fTemperature = ((data[2]*256) + data[3]) / 10.0;
+				fTemperature = ((data[2]*256) + data[3]) / 10.0;
 			}
 			else {
 				//temperature is negative
-				m_fTemperature = -(((data[2]&0x7F)*256) + data[3]) / 10;
+				fTemperature = -(((data[2]&0x7F)*256) + data[3]) / 10;
 			}
+			if (fHumidity!=0||fTemperature!=0) {//make sure temperature and humidity are not both zero (corresponds to invalid returned data)
+				if (nLocation==CPUBOX) {
+					this->m_fCPUHumidity = fHumidity;
+					this->m_fCPUTemperature = fTemperature;
+				}
+				else {//battery box
+					this->m_fBatteryHumidity = fHumidity;
+					this->m_fBatteryTemperature = fTemperature;
+				}
+			}
+			else {
+				pthread_mutex_unlock(&m_threadMutex);
+				return false;
+			}
+			
 			pthread_mutex_unlock(&m_threadMutex);
 		}
 		else {
 			//printf("[x_x] Invalid Data.\n\n");
 			return false;
 		}
-		m_bGotValidData = true;//now have obtained at least one sample of valid data
+		if (nLocation==CPUBOX) {
+			m_bGotValidCPUData = true;
+		}
+		else if (nLocation==BATTERYBOX) {
+			m_bGotValidBatteryData = true;
+		}
 		return true;
 	}
     return false;
+}
+
+bool HumiditySensor::gotValidData(int nLocation) {//return true if at least one sample of valid temperature / humidity data has been obtained for this location
+	if (nLocation==CPUBOX) {
+		return this->m_bGotValidCPUData;
+	}
+	else if (nLocation==BATTERYBOX) {
+		return this->m_bGotValidBatteryData;
+	}
+	return false;//unknown location
 }
