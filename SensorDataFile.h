@@ -65,8 +65,10 @@ private:
 	float m_fTurbidity;//the turbidity value of the water
 	float m_fCurrentDraw12V;//the amount of current (in A) coming from the +12V supply
 	float m_fBatteryVoltage;//the measured voltage of the +12V supply
-	float m_fHumidity;//the relative humidity inside AMOS (expressed as a percentage from 0 to 100)
-	float m_fHumidityTemp;//the temperature of the humidity sensor in AMOS (in deg C)
+	float m_fHumidityCPU;//the relative humidity inside the AMOS CPU box (expressed as a percentage from 0 to 100)
+	float m_fHumidityTempCPU;//the temperature of the humidity sensor in the AMOS CPU box (in deg C)
+	float m_fHumidityBattery;//the relative humidity inside the AMOS battery box (expressed as a percentage from 0 to 100)
+	float m_fHumidityTempBattery;//the temperature of the humidity sensor in the AMOS battery box (in deg C)
 	float m_fWirelessRXPower;//received wireless power (for serial wireless link, in dBm)
 	bool m_bLeak;//true if a leak has been detected, otherwise false
 	bool m_bSolarCharging;//true if solar panel is being charged through solar inputs, otherwise false

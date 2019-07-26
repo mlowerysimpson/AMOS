@@ -22,7 +22,7 @@ public:
     bool GetCurrentDraw(float &fCurrent);//return an estimate of the amount of current being consumed from the +12 V power supply
     bool GetWirelessRXPower(float &fRXPower);//return the received power level of the serial radio in dBm
     bool GetBatteryVoltage(float &fBatteryVoltage);//do an A to D measurement of the battery voltage and return the result
-    bool GetHumidityAndTemp(float &fHumidity, float &fTemp);//get relative humidity and temperature from DHT22 sensor module
+    bool GetHumidityAndTemp(float &fHumidity, float &fTemp, int nLocation);//get relative humidity and temperature from DHT22 sensor module in either the CPU box or the battery box
     void SetSerportHandle(int fd);//specify a serial port file descriptor to use for communications with the diagnostics hardware
     bool EnterSleepMode(int nSleepTimeSec);//send command to RFU220SU to power down this computer (i.e. the Raspberry Pi module of AMOS)
     static char * GetSensorFileHeader();//return the text header that should be used when saving diagnostics data to a sensor data file, calling function is responsible for deleting returned text

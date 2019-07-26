@@ -23,8 +23,10 @@ SensorDataFile::SensorDataFile(int *sensorTypes, int nNumSensors, void *sensorOb
 	m_fTurbidity=0;
 	m_fWirelessRXPower=0;
 	m_fCurrentDraw12V=0;
-	m_fHumidity=0;//the relative humidity inside AMOS (expressed as a percentage from 0 to 100)
-	m_fHumidityTemp=0;//the temperature of the humidity sensor in AMOS (in deg C)
+	m_fHumidityCPU=0;
+	m_fHumidityBattery=0;
+	m_fHumidityTempCPU=0;
+	m_fHumidityTempBattery=0;
 	m_fBatteryVoltage=0;
 	m_bSolarCharging = false;
 	m_bLeak = false;
@@ -168,10 +170,10 @@ char * SensorDataFile::GetFormattedData(struct tm *sampleTime) {//formats the cu
 				}
 				else sprintf(szWirelessRX,"N.A.");
 				if (this->m_bSolarCharging) {//solar panel is charging
-					sprintf(szTmp, "%.3f, %.2f, %.2f, %.2f, %s, Yes, ", this->m_fBatteryVoltage, this->m_fCurrentDraw12V, this->m_fHumidity, this->m_fHumidityTemp, szWirelessRX);
+					sprintf(szTmp, "%.3f, %.2f, %.2f, %.2f, %s, Yes, ", this->m_fBatteryVoltage, this->m_fCurrentDraw12V, this->m_fHumidityCPU, this->m_fHumidityTempCPU, this->m_fHumidityBattery, this->m_fHumidityTempBattery, szWirelessRX);
 				}
 				else {//solar panel is not charging
-					sprintf(szTmp, "%.3f, %.2f, %.2f, %.2f, %s, No, ", this->m_fBatteryVoltage, this->m_fCurrentDraw12V, this->m_fHumidity, this->m_fHumidityTemp, szWirelessRX);
+					sprintf(szTmp, "%.3f, %.2f, %.2f, %.2f, %s, No, ", this->m_fBatteryVoltage, this->m_fCurrentDraw12V, this->m_fHumidityCPU, this->m_fHumidityTempCPU, this->m_fHumidityBattery, this->m_fHumidityTempBattery, szWirelessRX);
 				}
 			}
 		}
@@ -365,7 +367,8 @@ bool SensorDataFile::SendSensorData(int nSensorType, int nHandle, bool bUseSeria
 			}
 			pDiagnosticsSensor->GetBatteryVoltage(this->m_fBatteryVoltage);
 			pDiagnosticsSensor->GetCurrentDraw(this->m_fCurrentDraw12V);
-			pDiagnosticsSensor->GetHumidityAndTemp(this->m_fHumidity,this->m_fHumidityTemp);
+			pDiagnosticsSensor->GetHumidityAndTemp(this->m_fHumidityCPU,this->m_fHumidityTempCPU,CPUBOX);
+			pDiagnosticsSensor->GetHumidityAndTemp(this->m_fHumidityBattery, this->m_fHumidityTempBattery,BATTERYBOX);
 			pDiagnosticsSensor->GetWirelessRXPower(this->m_fWirelessRXPower);
 			m_bSolarCharging = pDiagnosticsSensor->IsSolarCharging();
 			if (m_bSolarCharging) {
@@ -375,10 +378,12 @@ bool SensorDataFile::SendSensorData(int nSensorType, int nHandle, bool bUseSeria
 		pBoatData = BoatCommand::CreateBoatData(DIAGNOSTICS_DATA_PACKET);
 		memcpy(pBoatData->dataBytes,&m_fBatteryVoltage,sizeof(float));
 		memcpy(&pBoatData->dataBytes[sizeof(float)],&m_fCurrentDraw12V,sizeof(float));
-		memcpy(&pBoatData->dataBytes[2*sizeof(float)],&m_fHumidity,sizeof(float));
-		memcpy(&pBoatData->dataBytes[3*sizeof(float)],&m_fHumidityTemp,sizeof(float));
-		memcpy(&pBoatData->dataBytes[4*sizeof(float)],&m_fWirelessRXPower,sizeof(float));
-		memcpy(&pBoatData->dataBytes[5*sizeof(float)],&nSolarCharging,sizeof(int));
+		memcpy(&pBoatData->dataBytes[2*sizeof(float)],&m_fHumidityCPU,sizeof(float));
+		memcpy(&pBoatData->dataBytes[3*sizeof(float)],&m_fHumidityTempCPU,sizeof(float));
+		memcpy(&pBoatData->dataBytes[4*sizeof(float)],&m_fHumidityBattery,sizeof(float));
+		memcpy(&pBoatData->dataBytes[5*sizeof(float)],&m_fHumidityTempBattery,sizeof(float));
+		memcpy(&pBoatData->dataBytes[6*sizeof(float)],&m_fWirelessRXPower,sizeof(float));
+		memcpy(&pBoatData->dataBytes[7*sizeof(float)],&nSolarCharging,sizeof(int));
 	}
 	pBoatData->checkSum = BoatCommand::CalculateChecksum(pBoatData);//calculate simple 8-bit checksum for BOAT_DATA structure
 	return BoatCommand::SendBoatData(nHandle, bUseSerial, pBoatData, (void *)GetDiagnosticsSensor());	
@@ -556,7 +561,8 @@ void SensorDataFile::CollectData() {
 			if (pDiagnostics->GetCurrentDraw(fCurrentDraw)) {
 				SetData(DIAGNOSTICS_DATA,(double)fCurrentDraw);
 			}
-			pDiagnostics->GetHumidityAndTemp(m_fHumidity,m_fHumidityTemp);
+			pDiagnostics->GetHumidityAndTemp(m_fHumidityCPU,m_fHumidityTempCPU,CPUBOX);
+			pDiagnostics->GetHumidityAndTemp(m_fHumidityBattery, m_fHumidityTempBattery,BATTERYBOX);
 		}
 	}
 }

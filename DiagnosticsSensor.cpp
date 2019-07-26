@@ -268,7 +268,7 @@ bool DiagnosticsSensor::EnterSleepMode(int nSleepTimeSec) {
  * @return char* header text to be used when saving diagnostics info to a sensor data file. The calling function should delete the returned pointer after it is finished with it.
  */
 char * DiagnosticsSensor::GetSensorFileHeader() {
-    char *szHeader = "Voltage(V), Current(A), RH(%), BoatTemp2(degC), WirelessRX(dBm), Solar, ";
+    char *szHeader = "Voltage(V), Current(A), RH_CPU(%), RH_Temp_CPU(degC), RH_BATT(%), RH_TEMP_BATT(degC), WirelessRX(dBm), Solar, ";
     int nHeaderLength = strlen(szHeader);
     char *szRetval = new char[nHeaderLength+1];
     strcpy(szRetval,szHeader);
@@ -287,7 +287,7 @@ bool DiagnosticsSensor::GetBatteryVoltage(float &fBatteryVoltage) {
         return false;
     }
     double dBatteryVoltage=0.0;
-    if (m_pAToD->GetBatteryVoltage(dBatteryVoltage)) {
+    if (m_pAToD->GetBatteryVoltage(dBatteryVoltage,nullptr)) {
         fBatteryVoltage = (float)dBatteryVoltage;
         return true;
     }
@@ -299,14 +299,15 @@ bool DiagnosticsSensor::GetBatteryVoltage(float &fBatteryVoltage) {
  * 
  * @param fHumidity the returned relative humidity measured by the DHT22 sensor module, expressed as a percentage (between 0 and 100).
  * @param fTemp the returned temperature measured by the DHT22 sensor module, expressed in degrees C.
+ * @param nLocation the location of the humidity sensor, should be either CPUBOX or BATTERYBOX.
  * @return true if the relative humidity and temperature were obtained successfully from the DHT22.
  * @return false if there was a problem getting the relative humidity and / or temperature from the DHT22. This may occur on initial calls to this function if valid data has not yet been received from the DHT22.
  */
-bool DiagnosticsSensor::GetHumidityAndTemp(float &fHumidity, float &fTemp) {
-    if (!m_humiditySensor.GetHumidity(fHumidity)) {
+bool DiagnosticsSensor::GetHumidityAndTemp(float &fHumidity, float &fTemp, int nLocation) {
+    if (!m_humiditySensor.GetHumidity(fHumidity,nLocation)) {
         return false;
     }
-    if (!m_humiditySensor.GetTemperature(fTemp)) {
+    if (!m_humiditySensor.GetTemperature(fTemp,nLocation)) {
         return false;
     }
     return true;

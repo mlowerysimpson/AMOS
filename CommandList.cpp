@@ -97,7 +97,7 @@ BOAT_DATA * BoatCommand::CreateBoatData(int nDataType) {//create an empty BOAT_D
 	}
 	else if (nDataType==DIAGNOSTICS_DATA_PACKET) {
 		pAMOSData->nPacketType = DIAGNOSTICS_DATA_PACKET;
-		pAMOSData->nDataSize = 5*sizeof(float) + sizeof(int);
+		pAMOSData->nDataSize = 7*sizeof(float) + sizeof(int);
 		pAMOSData->dataBytes = new unsigned char[pAMOSData->nDataSize];
 		pAMOSData->checkSum = CalculateChecksum(pAMOSData);//checksum needs to be recalculated
 	}
