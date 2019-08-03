@@ -33,6 +33,7 @@
 #include "HumiditySensor.h"
 #include "Vision.h"
 #include "SwitchRelay.h"
+#include "SensorDeploy.h"
 #include "TFMini.h"
 #include "Util.h"
 
@@ -447,26 +448,11 @@ void *sensorCollectionFunction(void *pParam) {
 			time(&rawtime);
 			timeinfo = localtime(&rawtime);
 			if (g_sensorDataFile->isTimeToLogSensorData(timeinfo)) {
-				//get water temperature sensor data
-				float fWaterTemp = 0;
-				if (g_tempsensor.GetTemperature(fWaterTemp)) {
-					//printf("Water temp = %.3f\n",fTemperature);
-					if (g_bLogWaterTemp) {
-						g_sensorDataFile->SetData(WATER_TEMP_DATA, (double)fWaterTemp);
-					}
-				}
-				if (g_PHSensor) {
-					double dPHVal=0.0;//pH value (0-14), should be close-ish to 7
-					if (g_PHSensor->GetPHSensorPH(dPHVal)) {
-						g_sensorDataFile->SetData(PH_DATA, dPHVal);
-					}
-				}
-				if (g_turbiditySensor) {
-					double dTurbidityVal=0.0;//voltage from 0 to 5 V
-					if (g_turbiditySensor->GetTurbidity(dTurbidityVal)) {
-						g_sensorDataFile->SetData(WATER_TURBIDITY, dTurbidityVal);
-					}
-				}
+				SensorDeploy s(g_rootFolder,false);
+				s.Deploy();
+				usleep(10000000);//wait ten seconds for sensors to stabilize in water
+				g_sensorDataFile->CollectData();
+				s.Retract();
 				g_sensorDataFile->SaveData(timeinfo, g_nLoggingIntervalSec);
 			}
 		}

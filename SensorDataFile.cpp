@@ -170,10 +170,10 @@ char * SensorDataFile::GetFormattedData(struct tm *sampleTime) {//formats the cu
 				}
 				else sprintf(szWirelessRX,"N.A.");
 				if (this->m_bSolarCharging) {//solar panel is charging
-					sprintf(szTmp, "%.3f, %.2f, %.2f, %.2f, %s, Yes, ", this->m_fBatteryVoltage, this->m_fCurrentDraw12V, this->m_fHumidityCPU, this->m_fHumidityTempCPU, this->m_fHumidityBattery, this->m_fHumidityTempBattery, szWirelessRX);
+					sprintf(szTmp, "%.3f, %.2f, %.2f, %.2f, %.2f, %.2f, %s, Yes, ", this->m_fBatteryVoltage, this->m_fCurrentDraw12V, this->m_fHumidityCPU, this->m_fHumidityTempCPU, this->m_fHumidityBattery, this->m_fHumidityTempBattery, szWirelessRX);
 				}
 				else {//solar panel is not charging
-					sprintf(szTmp, "%.3f, %.2f, %.2f, %.2f, %s, No, ", this->m_fBatteryVoltage, this->m_fCurrentDraw12V, this->m_fHumidityCPU, this->m_fHumidityTempCPU, this->m_fHumidityBattery, this->m_fHumidityTempBattery, szWirelessRX);
+					sprintf(szTmp, "%.3f, %.2f, %.2f, %.2f, %.2f, %.2f, %s, No, ", this->m_fBatteryVoltage, this->m_fCurrentDraw12V, this->m_fHumidityCPU, this->m_fHumidityTempCPU, this->m_fHumidityBattery, this->m_fHumidityTempBattery, szWirelessRX);
 				}
 			}
 		}
