@@ -23,6 +23,7 @@
 #include "FileCommands.h"
 #include "LeakSensor.h"
 #include "TempSensor.h"
+#include "BatteryCharge.h"
 #include "NotifyOperator.h"
 #include "AToD.h"
 #include "PHSensor.h"
@@ -31,6 +32,7 @@
 #include "DiagnosticsSensor.h"
 #include "HumiditySensor.h"
 #include "Vision.h"
+#include "SwitchRelay.h"
 #include "TFMini.h"
 #include "Util.h"
 
@@ -46,6 +48,7 @@ vector <string> g_ipAddresses;
 NotifyOperator g_notifier;//used for notifying one or more people by email or text of the boat's condition
 Navigation *g_navigator;//used for handling all of the boat's navigation needs
 AToD *g_atod;//used for collecting A to D converter data (such as from battery voltage measurement and various analog sensor measurements
+BatteryCharge *g_batteryCharge;//used for monitoring the battery charge level
 FileCommands *g_fileCommands;//used for handling commands sent to boat through a text file passed on the command line of this program
 Thruster *g_thrusters;//pointer to Thruster object for controlling power to the boat's thruster(s)
 ShipLog g_shiplog;//used for logging data and to assist in debugging
@@ -54,6 +57,7 @@ TempSensor g_tempsensor;//interface for waterproof temperature sensor, poll to m
 DiagnosticsSensor *g_shipdiagnostics;//interface for ship monitoring, power control, etc.
 PHSensor *g_PHSensor;//interface object for pH probe
 TurbiditySensor *g_turbiditySensor;//interface object for turbidity sensor
+SwitchRelay *g_switchRelay;//interface object for controlling switch relay (eg. for switching solar input to charge controller on / off)
 Vision g_vision;//object used for taking pictures with camera(s)
 TFMini m_miniLiDAR;//object used for getting distance measurements to objects using TFMini LiDAR
 
@@ -356,12 +360,24 @@ void *sensorCollectionFunction(void *pParam) {
 		if ((uiCurrentTime - uiLastBattVoltageMeasurement)>=60000) {//do battery voltage measurement every minute
 			uiLastBattVoltageMeasurement = uiCurrentTime;
 			double dBattVoltage = 0.0;
-			if (g_atod->GetBatteryVoltage(dBattVoltage)) {
+			if (g_atod->GetBatteryVoltage(dBattVoltage,g_batteryCharge)) {
+				//check to see if battery voltage is too high (need to shut off solar input to charge controller)
+				if (g_switchRelay->isOverVoltage(dBattVoltage)) {//voltage is too high
+					//switch off solar input to charge controller
+					g_shiplog.LogEntry((char *)"Turning off solar power.\n",true);
+					g_switchRelay->TurnOnSolarPower(false);
+				}
+				else if (!g_switchRelay->isFullyCharged(dBattVoltage)) {//battery is not fully charged
+					if (!g_switchRelay->isSwitchedOn()) {//solar input to controller was switched off previously, so switch it back on now
+						g_shiplog.LogEntry((char *)"Turning on solar power.\n",true);
+						g_switchRelay->TurnOnSolarPower(true);
+					}
+				}
 				if (g_dBatteryVoltage>BATT_VOLTAGE_CUTOFF) {
 					if (dBattVoltage<BATT_VOLTAGE_CUTOFF) {
 						//user must have switched off battery voltage, stop program and set flag that +12 V power has been switched off
 						//but first re-check voltage a to make sure that it wasn't just a momentary glitch
-						if (g_atod->GetBatteryVoltage(dBattVoltage)) {
+						if (g_atod->GetBatteryVoltage(dBattVoltage, g_batteryCharge)) {
 							if (dBattVoltage<BATT_VOLTAGE_CUTOFF) {
 								g_shiplog.LogEntry((char *)"User switched off power.\n",true);
 								g_bKeepGoing=false;
@@ -372,7 +388,7 @@ void *sensorCollectionFunction(void *pParam) {
 					}
 				}
 				if (g_navigator&&!g_bVoltageSwitchedOff) {
-					if (dBattVoltage<LOW_POWER_VOLTAGE&&dBattVoltage>9) {//charge levels are getting pretty low, need to shut down thrusters, send alarm notification, go into low power mode, and hope for sunshine
+					if (!g_batteryCharge->isChargeOK()) {//charge levels are getting pretty low, need to shut down thrusters, send alarm notification, go into low power mode, and hope for sunshine
 						//turn off thrusters
 						g_navigator->SetPowerMode(LOW_POWER_MODE,dBattVoltage,&g_shiplog);
 						//send alarm notification that power levels are low
@@ -384,7 +400,7 @@ void *sensorCollectionFunction(void *pParam) {
 						//enter low power mode for an hour
 						EnterSleepMode(3600);
 					}
-					else if (dBattVoltage>=FULL_POWER_VOLTAGE) {//charge levels are pretty full, can enable full-speed operation
+					else if (dBattVoltage>=FULL_POWER_VOLTAGE) {//charge levels are pretty full, can enable full-speed operation if not already in that mode
 						g_navigator->SetPowerMode(FULL_POWER_MODE,dBattVoltage,&g_shiplog);
 					}
 				}
@@ -574,6 +590,10 @@ void Cleanup() {//remove any un-executed commands from the queue, do general cle
 		delete g_atod;
 		g_atod = nullptr;
 	}
+	if (g_batteryCharge) {
+		delete g_batteryCharge;
+		g_batteryCharge = nullptr;
+	}
 	if (g_navigator) {
 		delete g_navigator;
 		g_navigator=nullptr;
@@ -581,6 +601,10 @@ void Cleanup() {//remove any un-executed commands from the queue, do general cle
 	if (g_fileCommands) {
 		delete g_fileCommands;
 		g_fileCommands=nullptr;
+	}
+	if (g_switchRelay) {
+		delete g_switchRelay;
+		g_switchRelay = nullptr;
 	}
 }
 
@@ -766,6 +790,7 @@ int main(int argc, const char * argv[]) {
 	g_shipdiagnostics = nullptr;
 	g_sensorDataFile = nullptr;
 	g_serPort = nullptr;
+	g_switchRelay = nullptr;
 	g_bEnteringSleepMode = false;
 	g_bLogWaterTemp = false;
 	g_bLogBoatTemp = false;
@@ -796,6 +821,7 @@ int main(int argc, const char * argv[]) {
 	Thruster::OneTimeSetup();//do I/O setup for thrusters (once per power-cycle), this function calls the WiringPi setup function
 
 	pinMode(ACTIVITY_PIN,OUTPUT);//setup activity pin as output
+	g_switchRelay = new SwitchRelay((char *)"prefs.txt");
 	if (g_shipdiagnostics!=nullptr) {
 		g_shipdiagnostics->ActivityPulse();//send activity pulse out on activity pin to indicate that program is running
 	}
@@ -805,6 +831,7 @@ int main(int argc, const char * argv[]) {
 
 	char *i2c_filename = (char*)"/dev/i2c-1";
 	g_atod = new AToD(i2c_filename,ATOD_ADDRESS,&g_shiplog,&g_i2cMutex);
+	g_batteryCharge = new BatteryCharge(&g_shiplog);
 	g_shipdiagnostics = new DiagnosticsSensor(g_atod);
 
 	bool bContainsHelpFlag = Util::ContainsHelpFlag(argc, argv);
