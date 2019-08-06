@@ -322,7 +322,8 @@ double Navigation::ComputeHeadingDif(double dHeading1Deg,double dHeading2Deg) {/
  */
  void Navigation::TurnToCompassHeading(float fHeading,void *pThrusters,pthread_mutex_t *command_mutex, unsigned int *lastNetworkCommandTimeMS, void *pShipLog, bool *bCancel, int nPriority) {//turn boat to desired heading
 	float MAX_TURN_SPEED = 5;
-	const float CLOSE_ENOUGH_DEG = 10;//try to get heading to match up within this amount
+	const int REVERSE_TIME_SEC = 60;//try turning in opposite direction after this many seconds (necessary sometimes when stuck on rocks, etc.)
+	const float CLOSE_ENOUGH_DEG = 30;//try to get heading to match up within this amount
 	float fSpeedLeft=0, fSpeedRight=0;//left and right thruster speeds (start at slow speed)
 	char sMsg[256];
 	Thruster *pThrust = (Thruster *)pThrusters;
@@ -366,15 +367,25 @@ double Navigation::ComputeHeadingDif(double dHeading1Deg,double dHeading2Deg) {/
 	pthread_mutex_unlock(command_mutex);
 	double dHeadingDif = ComputeHeadingDif(m_imuData.heading,(double)fHeading);
 	double dEstimatedTimeLeft = dHeadingDif / m_dFilteredYawRate;//estimated time left in seconds to achieve desired heading (could be negative if we're yawing in the wrong direction)
+	unsigned int uiStartTime = millis();
+	bool bReverse = false;//set to true when it is time to try reversing direction (after REVERSE_TIME_SEC)
 	while (fabs(dHeadingDif)>CLOSE_ENOUGH_DEG&&!*bCancel) {
+		unsigned int uiCurrentTime = millis();
+		if ((uiCurrentTime - uiStartTime)>REVERSE_TIME_SEC) {
+			bReverse = !bReverse;
+			uiStartTime = uiCurrentTime;
+		}
+		if (bReverse) {
+			dHeadingDif=-dHeadingDif;
+			dEstimatedTimeLeft=-dEstimatedTimeLeft;
+		}
 		if (dEstimatedTimeLeft<0) {//rotating in wrong direction
 			IncrementTurningSpeed(fSpeedLeft,fSpeedRight,MAX_TURN_SPEED,dHeadingDif>0);
 		}
 		else {//set speed of turn to be proportional to the expected amount of time remaining
 			if (dHeadingDif>0) {//need to turn clockwise
-				fSpeedLeft = (dEstimatedTimeLeft - 5) / 50 * MAX_TURN_SPEED;
+				fSpeedLeft = dEstimatedTimeLeft / 50 * MAX_TURN_SPEED;
 				if (fSpeedLeft>MAX_TURN_SPEED) fSpeedLeft = MAX_TURN_SPEED;
-				if (fSpeedLeft<0) fSpeedLeft=0;//already rotating in right direction, just turn off thruster 
 				fSpeedRight = -fSpeedLeft;
 				if (bAirBoat&&fSpeedRight<0) {
 					fSpeedRight = 0;
@@ -383,7 +394,6 @@ double Navigation::ComputeHeadingDif(double dHeading1Deg,double dHeading2Deg) {/
 			else {//need to turn counter_clockwise
 				fSpeedRight = (dEstimatedTimeLeft - 5) / 50 * MAX_TURN_SPEED;
 				if (fSpeedRight>MAX_TURN_SPEED) fSpeedRight = MAX_TURN_SPEED;
-				if (fSpeedRight<0) fSpeedRight=0;//already rotating in right direction, just turn off thruster 
 				fSpeedLeft = -fSpeedRight;
 				if (bAirBoat&&fSpeedLeft<0) {
 					fSpeedLeft = 0;
@@ -395,29 +405,14 @@ double Navigation::ComputeHeadingDif(double dHeading1Deg,double dHeading2Deg) {/
 		}
 		CheckPriority(nPriority);//check to see if there are no other higher priority threads trying to execute a navigation command at the same time
 		pthread_mutex_lock(command_mutex);
-		//test
-		//sprintf(sMsg,"fSpeedLeft = %.1f, fSpeedRight = %.1f\n",fSpeedLeft,fSpeedRight);
-		//pLog->LogEntry(sMsg,true);
-		//end test
-		/*if (pThrust->isAirBoat()) {
-			//minimum required turning speed for airboat (+/- 2)
-			if (fSpeedLeft<0&&fSpeedLeft>-2) {
-				fSpeedLeft=-2;
-			}
-			else if (fSpeedLeft>0&&fSpeedLeft<2) {
-				fSpeedLeft=2;
-			}
-			if (fSpeedRight<0&&fSpeedRight>-2) {
-				fSpeedRight=-2;
-			}
-			else if (fSpeedRight>0&&fSpeedRight<2) {
-				fSpeedRight=2;
-			}
-		}*/
+		
 		pThrust->SetLeftRightSpeed(fSpeedLeft, fSpeedRight);
 		pthread_mutex_unlock(command_mutex);
 		usleep(100000);//loop every 100 ms
 		dHeadingDif = ComputeHeadingDif(m_imuData.heading,(double)fHeading);
+		if (bReverse) {
+			dHeadingDif = -dHeadingDif;
+		}
 		//test
 		//sprintf(sMsg,"heading=%.1f, dif = %.1f\n",m_imuData.heading,dHeadingDif);
 		//pLog->LogEntry(sMsg,true);
@@ -609,7 +604,7 @@ char *Navigation::GetStatusLogText() {
  * @param nPriority the priority level of the calling thread that requested this command.
  */
  void Navigation::DriveToLocation(double dLatitude, double dLongitude, void *pThrusters, pthread_mutex_t *command_mutex, unsigned int *lastNetworkCommandTimeMS, void *pShipLog, int nInterpAmount, bool *bCancel, int nPriority) {
-	const float MAX_ALLOWED_HEADING_ERROR = 20;//need to do a full stop turn when the course of the GPS track deviates more than this from the desired track
+	const float MAX_ALLOWED_HEADING_ERROR = 30;//need to do a full stop turn when the course of the GPS track deviates more than this from the desired track
 	const unsigned int COMPASS_REORIENT_TIME = 60000;//minimum number of ms to go without doing a full magnetic compass check 
 	double dMaxSpeed = m_dMaxSpeed;//normally the maximum speed will be MAX_THRUSTER_SPEED, except when the boat gets close to its destination, or when battery charge is getting low, then the speed is reduced
 	if (dMaxSpeed<=0.0) {
@@ -1283,19 +1278,25 @@ void Navigation::SetPowerMode(int nPowerMode,double dVoltage,void *pShipLog) {
 	ShipLog *pLog = (ShipLog *)pShipLog;
 	char sMsg[256];
 	if (nPowerMode==LOW_POWER_MODE) {
-		sprintf(sMsg,"Setting low power mode, voltage = %.2f V\n",dVoltage);
-		m_dMaxSpeed=0.0;
-		pLog->LogEntry(sMsg,true);
+		if (m_dMaxSpeed>0.0) {
+			sprintf(sMsg,"Setting low power mode, voltage = %.2f V\n",dVoltage);
+			m_dMaxSpeed=0.0;
+			pLog->LogEntry(sMsg,true);
+		}
 	}
 	else if (nPowerMode==HALF_POWER_MODE) {
-		sprintf(sMsg,"Setting half power mode, voltage = %.2f V\n",dVoltage);
-		m_dMaxSpeed = MAX_THRUSTER_SPEED/2;
-		pLog->LogEntry(sMsg,true);
+		if (m_dMaxSpeed!=MAX_THRUSTER_SPEED/2) {
+			sprintf(sMsg,"Setting half power mode, voltage = %.2f V\n",dVoltage);
+			m_dMaxSpeed = MAX_THRUSTER_SPEED/2;
+			pLog->LogEntry(sMsg,true);
+		}
 	}
 	else if (nPowerMode==FULL_POWER_MODE) {
-		sprintf(sMsg,"Setting full power mode, voltage = %.2f V\n",dVoltage);
-		m_dMaxSpeed = MAX_THRUSTER_SPEED;
-		pLog->LogEntry(sMsg,true);
+		if (m_dMaxSpeed!=MAX_THRUSTER_SPEED) {
+			sprintf(sMsg,"Setting full power mode, voltage = %.2f V\n",dVoltage);
+			m_dMaxSpeed = MAX_THRUSTER_SPEED;
+			pLog->LogEntry(sMsg,true);
+		}
 	}
 }
 
