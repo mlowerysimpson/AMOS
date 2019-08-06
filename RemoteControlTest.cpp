@@ -86,6 +86,8 @@ bool g_bSerportThreadRunning;//boolean flag is true when the serial port thread 
 bool g_bGPSThreadRunning;//boolean flag is true when the gps collection thread is running
 bool g_bSensorThreadRunning;//boolean flag is true when the sensor collection thread is running
 char *g_serPort;//the text identifier of the serial port being used for a wireless serial link (set to nullptr if not used)
+char g_keyboardBuf[4];//used to keep track of the last 4 characters typed by the user, looking for the word "quit" to exit the program
+int g_keyTypedIndex;//index within g_keyboardBuf for where to store the next keyboard character typed
 
 //thread IDs
 pthread_t g_networkThreadId;//thread id for thread that listens for incoming network connections
@@ -407,9 +409,19 @@ void *sensorCollectionFunction(void *pParam) {
 				}
 				g_dBatteryVoltage = dBattVoltage;
 			}
-			else if (g_dBatteryVoltage>BATT_VOLTAGE_CUTOFF) {
+			else {
 				//function call to get battery voltage failed for some reason
 				g_shiplog.LogEntry((char *)"Error, failed to get battery voltage.\n",true);
+				if (g_switchRelay->isSwitchedOn()) {
+					//try switching solar power off
+					g_switchRelay->TurnOnSolarPower(false);
+					g_shiplog.LogEntry((char *)"Switching solar power off to see if that fixes voltage measurements.\n",true);
+				}
+				else {
+					//try switching solar power on
+					g_switchRelay->TurnOnSolarPower(true);
+					g_shiplog.LogEntry((char *)"Switching solar power off to see if that fixes voltage measurements.\n",true);
+				}
 			}
 		}
 		//check to see if LiDAR measurement should be made
@@ -771,6 +783,29 @@ void GetDataLoggingPreferences() {//get data logging preferences from prefs.txt 
 
 }
 
+/**
+ * @brief check to see if the user has typed the text "quit" to exit the program
+ * 
+ * @param nKeyboardChar the character code for the key most recently pressed by the user
+ * @return true if the last 4 characters typed by the user are "quit".
+ * @return false otherwise.
+ */
+bool CheckUserQuit(int nKeyboardChar) {
+	//save key typed by user
+	const char *check_word = "quit";//text we are looking for to return true
+	g_keyboardBuf[g_keyTypedIndex] = nKeyboardChar;
+	g_keyTypedIndex++;
+	//check to see if last 4 characters typed are equal to "quit"
+	for (int i=0;i<4;i++) {
+		int j = g_keyTypedIndex-4+i;
+		if (j<0) j+=4;
+		if (g_keyboardBuf[j]!=check_word[i]) {
+			return false;
+		}	
+	}
+	return true;//user typed check_word
+}
+
 int main(int argc, const char * argv[]) {
 	getcwd(g_rootFolder,PATH_MAX);
 	g_shipdiagnostics = nullptr;
@@ -792,6 +827,8 @@ int main(int argc, const char * argv[]) {
 	g_dLiDAR_IntervalSec = 0.0;
 	g_bObjectPictures = false;
 	g_bLiDARSafetyMode = false;
+	memset(g_keyboardBuf,0,4);
+	g_keyTypedIndex = 0;
 
 	g_navigator = new Navigation(-18,&g_i2cMutex);//set to - 18 degrees magnetic declination for New Brunswick, Canada
 	struct ifaddrs * ifAddrStruct = NULL;
@@ -861,7 +898,7 @@ int main(int argc, const char * argv[]) {
 		char *remoteIPAddr = (char *)argv[1];
 		StartNetworkClientThread(remoteIPAddr);//start thread to open client that connects to the boat server
 	}
-	printf("Press \'q\' to exit...\n");
+	printf("Type \"quit\" to exit...\n");
 	StartGPSThread();//start thread for receiving GPS data
 	//execute this loop until we get some accurate GPS data before doing anything else
 	bool bGotAccurateGPSData = false;
@@ -873,9 +910,13 @@ int main(int argc, const char * argv[]) {
 			RemoteCommand::DeleteCommand(pRC);//finished with command now, so delete it
 		}
 		//if (_kbhit()) {
-		int nQuitCode = Util::getch_noblock();
-		if (nQuitCode==113) {
-			g_shiplog.LogEntry((char *)"\'q\' key pressed to exit program.\n",false);
+		int nKeyboardChar = Util::getch_noblock();
+		bool bUserQuit = false;
+		if (nKeyboardChar>0) {
+			bUserQuit = CheckUserQuit(nKeyboardChar);	
+		}
+		if (bUserQuit) {
+			g_shiplog.LogEntry((char *)"User typed \"quit\" to exit program.\n",false);
 			g_bKeepGoing = false;
 			g_bCancelFunctions = true;
 		}
@@ -912,9 +953,13 @@ int main(int argc, const char * argv[]) {
 			RemoteCommand::DeleteCommand(pRC);//finished with command now, so delete it
 		}
 		//if (_kbhit()) {
-		int nQuitCode = Util::getch_noblock();
-		if (nQuitCode==113) {
-			g_shiplog.LogEntry((char *)"\'q\' key pressed to exit program.\n",false);
+		bool bUserQuit = false;
+		int nKeyboardChar = Util::getch_noblock();
+		if (nKeyboardChar>0) {
+			bUserQuit = CheckUserQuit(nKeyboardChar);	
+		}
+		if (bUserQuit) {
+			g_shiplog.LogEntry((char *)"User typed \"quit\" to exit program.\n",false);
 			g_bKeepGoing = false;
 			g_bCancelFunctions = true;
 		}
