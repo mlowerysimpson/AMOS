@@ -322,8 +322,9 @@ double Navigation::ComputeHeadingDif(double dHeading1Deg,double dHeading2Deg) {/
  */
  void Navigation::TurnToCompassHeading(float fHeading,void *pThrusters,pthread_mutex_t *command_mutex, unsigned int *lastNetworkCommandTimeMS, void *pShipLog, bool *bCancel, int nPriority) {//turn boat to desired heading
 	float MAX_TURN_SPEED = 5;
-	const int REVERSE_TIME_SEC = 60;//try turning in opposite direction after this many seconds (necessary sometimes when stuck on rocks, etc.)
+	const int REVERSE_TIME_SEC = 30;//try turning in opposite direction after this many seconds (necessary sometimes when stuck on rocks, etc.)
 	const float CLOSE_ENOUGH_DEG = 30;//try to get heading to match up within this amount
+	const int REVERSE_THRUST_TIME_SEC = 10;//length of time in seconds to try reversing turning direction (at maximum speed). Used when normal turning doesn't seem to be working, e.g. when stuck on rocks.
 	float fSpeedLeft=0, fSpeedRight=0;//left and right thruster speeds (start at slow speed)
 	char sMsg[256];
 	Thruster *pThrust = (Thruster *)pThrusters;
@@ -372,12 +373,7 @@ double Navigation::ComputeHeadingDif(double dHeading1Deg,double dHeading2Deg) {/
 	while (fabs(dHeadingDif)>CLOSE_ENOUGH_DEG&&!*bCancel) {
 		unsigned int uiCurrentTime = millis();
 		if ((uiCurrentTime - uiStartTime)>REVERSE_TIME_SEC) {
-			bReverse = !bReverse;
-			uiStartTime = uiCurrentTime;
-		}
-		if (bReverse) {
-			dHeadingDif=-dHeadingDif;
-			dEstimatedTimeLeft=-dEstimatedTimeLeft;
+			bReverse = true;
 		}
 		if (dEstimatedTimeLeft<0) {//rotating in wrong direction
 			IncrementTurningSpeed(fSpeedLeft,fSpeedRight,MAX_TURN_SPEED,dHeadingDif>0);
@@ -405,14 +401,26 @@ double Navigation::ComputeHeadingDif(double dHeading1Deg,double dHeading2Deg) {/
 		}
 		CheckPriority(nPriority);//check to see if there are no other higher priority threads trying to execute a navigation command at the same time
 		pthread_mutex_lock(command_mutex);
-		
+		if (bReverse) {
+			if (fSpeedLeft>fSpeedRight) {
+				fSpeedLeft = 0;
+				fSpeedRight = MAX_TURN_SPEED;
+			}
+			else {
+				fSpeedLeft = MAX_TURN_SPEED;
+				fSpeedRight = 0;
+			}
+		}
 		pThrust->SetLeftRightSpeed(fSpeedLeft, fSpeedRight);
 		pthread_mutex_unlock(command_mutex);
 		usleep(100000);//loop every 100 ms
-		dHeadingDif = ComputeHeadingDif(m_imuData.heading,(double)fHeading);
 		if (bReverse) {
-			dHeadingDif = -dHeadingDif;
+			usleep(10000000);//allow reversed turning to act for 10 seconds
+			bReverse = false;
+			uiStartTime = millis();
 		}
+		dHeadingDif = ComputeHeadingDif(m_imuData.heading,(double)fHeading);
+		
 		//test
 		//sprintf(sMsg,"heading=%.1f, dif = %.1f\n",m_imuData.heading,dHeadingDif);
 		//pLog->LogEntry(sMsg,true);
