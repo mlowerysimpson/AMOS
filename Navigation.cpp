@@ -372,7 +372,7 @@ double Navigation::ComputeHeadingDif(double dHeading1Deg,double dHeading2Deg) {/
 	bool bReverse = false;//set to true when it is time to try reversing direction (after REVERSE_TIME_SEC)
 	while (fabs(dHeadingDif)>CLOSE_ENOUGH_DEG&&!*bCancel) {
 		unsigned int uiCurrentTime = millis();
-		if ((uiCurrentTime - uiStartTime)>REVERSE_TIME_SEC) {
+		if ((uiCurrentTime - uiStartTime)>(REVERSE_TIME_SEC*1000)) {
 			bReverse = true;
 		}
 		if (dEstimatedTimeLeft<0) {//rotating in wrong direction
@@ -415,9 +415,17 @@ double Navigation::ComputeHeadingDif(double dHeading1Deg,double dHeading2Deg) {/
 		pthread_mutex_unlock(command_mutex);
 		usleep(100000);//loop every 100 ms
 		if (bReverse) {
-			usleep(10000000);//allow reversed turning to act for 10 seconds
+			unsigned int uiReverseStart = millis();
+			unsigned int uiReverseStop = uiReverseStart + 10000000;//go in reverse direction for up to 10 seconds
+			while (millis()<uiReverseStop&&fabs(dHeadingDif)>CLOSE_ENOUGH_DEG) {
+				usleep(100000);
+				dHeadingDif = ComputeHeadingDif(m_imuData.heading,(double)fHeading);
+			}
 			bReverse = false;
 			uiStartTime = millis();
+		}
+		if (fabs(dHeadingDif)<=CLOSE_ENOUGH_DEG) {//reversing direction got us close enough to the target heading
+			break;
 		}
 		dHeadingDif = ComputeHeadingDif(m_imuData.heading,(double)fHeading);
 		
