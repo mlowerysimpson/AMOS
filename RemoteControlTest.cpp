@@ -34,7 +34,8 @@
 #include "Vision.h"
 #include "SwitchRelay.h"
 #include "SensorDeploy.h"
-#include "TFMini.h"
+//#include "TFMini.h" // use this if using TF Mini LiDAR
+#include "LIDARLite.h"
 #include "Util.h"
 
 using namespace std;
@@ -42,7 +43,7 @@ using namespace std;
 #define SERVER_PORT 82 //the port number that we are trying to connect to
 #define SHIP_LOG_INTERVAL_SECONDS 60 //length of time in seconds between ship's log posts
 #define ATOD_ADDRESS 0x48 //I2C address of 4-channel ADS1115 ADC converter
-#define LiDAR_SERPORT "/dev/serial0" //serial port used for communications with TFMini LiDAR device
+//#define LiDAR_SERPORT "/dev/serial0" //serial port used for communications with TFMini LiDAR device
 
 vector <string> g_ipNames;
 vector <string> g_ipAddresses;
@@ -60,15 +61,15 @@ PHSensor *g_PHSensor;//interface object for pH probe
 TurbiditySensor *g_turbiditySensor;//interface object for turbidity sensor
 SwitchRelay *g_switchRelay;//interface object for controlling switch relay (eg. for switching solar input to charge controller on / off)
 Vision g_vision;//object used for taking pictures with camera(s)
-TFMini m_miniLiDAR;//object used for getting distance measurements to objects using TFMini LiDAR
-
-
+//TFMini m_miniLiDAR;//object used for getting distance measurements to objects using TFMini LiDAR
+LIDARLite *g_lidar;//object used for getting distance measurements to objects using LIDAR Lite
 
 //LiDAR parameters
 bool g_bUseLiDAR;//true if LiDAR measurements are being used for detecting obstacles
 double g_dLiDAR_IntervalSec;//interval in seconds between LiDAR measurements
 bool g_bObjectPictures;//whether or not to take a picture whenever an obstacle is encountered with LiDAR measurements.	
 bool g_bLiDARSafetyMode;//flag is true if thrusters should be switched off whenever a nearby obstacle is detected using liDAR
+bool g_bLiDARAvoidanceMode;//flag is true if boat should alter its heading in order to try to avoid obstacles.
 
 //other global parameters
 char g_rootFolder[PATH_MAX];//root folder where this program starts from
@@ -96,6 +97,7 @@ pthread_t g_sensorThreadId;//thread id for collecting sensor data
 pthread_t g_threadFileCommandsId;//thread id for getting file commands
 pthread_t g_serportThreadId;//thread id for getting data over a serial (wireless) link
 pthread_mutex_t g_remoteCommandsMutex;//mutex for making sure remote commands do not interfere with one another
+pthread_mutexattr_t g_remoteCommandsMutexAttr;//mutex attribute for remote commads mutex (allows it to be recursive)
 pthread_mutex_t g_i2cMutex;//mutex for controlling access to i2c bus
 SensorDataFile *g_sensorDataFile;//object used for logging sensor data to file
 
@@ -113,6 +115,39 @@ void ShowUsage() {
 	printf("command_file: an optional text command file that AMOS should execute.\n");
 	printf("-h or --help: displays this help text.\n");
 
+}
+
+/**
+ * @brief try to rotate the boat clockwise and counterclockwise until we find an angle where there is no obstacle (as determined by LiDAR)
+ * 
+ */
+void RotateAwayFromObstacle() {
+	const int NUM_ANGLES_TO_TRY = 7;
+	if (g_navigator==nullptr) {
+		return;
+	}
+	float rotation_angles[7];
+	rotation_angles[0] = -45;
+	rotation_angles[1] = 45;
+	rotation_angles[2] = 90;
+	rotation_angles[3] = -90;
+	rotation_angles[4] = -135;
+	rotation_angles[5] = 135;
+	rotation_angles[6] = 180;
+	float fStartHeading = (float)g_navigator->m_imuData.heading;
+	for (int i=0;i<NUM_ANGLES_TO_TRY;i++) {
+		float fTryHeading = fStartHeading + rotation_angles[i];
+		if (fTryHeading<0) fTryHeading+=360;
+		else if (fTryHeading>360) fTryHeading-=360;
+		bool bCancel = !g_bKeepGoing;
+		if (bCancel) return;
+		g_navigator->TurnToCompassHeading(fTryHeading,g_thrusters,&g_remoteCommandsMutex,&g_lastNetworkCommandTime,&g_shiplog,&bCancel,LOW_PRIORITY);
+		double dDistMeters = g_lidar->getDistance()*.01;
+		if (dDistMeters==0||dDistMeters>13) {
+			//no near objects, proceed at this angle for a while
+			g_navigator->SetObstacleAvoidanceOffset(rotation_angles[i], 60);//add direction offset for the "Drive" functions in g_navigator for 60 seconds
+		}
+	}
 }
 
 void *serportFunction(void *pParam) {//function receives commands from base station over (wireless) serial link
@@ -390,6 +425,7 @@ void *sensorCollectionFunction(void *pParam) {
 						}
 					}
 				}
+
 				if (g_navigator&&!g_bVoltageSwitchedOff) {
 					if (!g_batteryCharge->isChargeOK()) {//charge levels are getting pretty low, need to shut down thrusters, send alarm notification, go into low power mode, and hope for sunshine
 						//turn off thrusters
@@ -426,20 +462,27 @@ void *sensorCollectionFunction(void *pParam) {
 		}
 		//check to see if LiDAR measurement should be made
 		if (g_bUseLiDAR&&(uiCurrentTime - uiLastLiDARMeasurement)>=1000*g_dLiDAR_IntervalSec) {//do LiDAR measurement
-			double dDistMeters = m_miniLiDAR.getDistance()*.01;
-			unsigned short signalStrength = m_miniLiDAR.getRecentSignalStrength();
-			if (signalStrength>=MIN_SIGNAL_STRENGTH&&dDistMeters<13) {
+			//double dDistMeters = m_miniLiDAR.getDistance()*.01; //--> uncomment for TF Mini LiDAR
+			double dDistMeters = g_lidar->getDistance()*.01;
+			//unsigned short signalStrength = m_miniLiDAR.getRecentSignalStrength(); //--> uncomment for TF Mini LiDAR
+			//if (signalStrength>=MIN_SIGNAL_STRENGTH&&dDistMeters<13) { //--> uncomment for TF Mini LiDAR
+			if (dDistMeters>0&&dDistMeters<13) {
 				//detected some sort of obstacle
 				if (g_bObjectPictures) {
 					g_vision.CaptureFrameWithDistText(dDistMeters);//capture frame of video with an estimate of the distance to the object (in m) superimposed on the picture (use autocapture settings for filename)
 				}
 				if (g_bLiDARSafetyMode) {//make sure thrusters are turned off in order to minimize potential impact from collision
-					if (g_thrusters&&!g_thrusters->isInSafetyMode()) {
+					if (g_thrusters!=nullptr&&!g_thrusters->isInSafetyMode()) {
 						char obstacleMsg[128];
 						sprintf(obstacleMsg,(char *)"Obstacle detected %.2f m away. Safety mode engaged, thrusters turned off.\n",dDistMeters);
 						g_shiplog.LogEntry(obstacleMsg,true);
 						g_thrusters->SetObstacleSafetyMode(true);
 					}
+				}
+				else if (g_bLiDARAvoidanceMode) {
+					pthread_mutex_lock(&g_remoteCommandsMutex);
+					RotateAwayFromObstacle();
+					pthread_mutex_unlock(&g_remoteCommandsMutex);
 				}
 			}
 			else {//no obstacles, or at least nothing within 13 m
@@ -452,7 +495,6 @@ void *sensorCollectionFunction(void *pParam) {
 			}
 			uiLastLiDARMeasurement = uiCurrentTime;
 		}
-		
 		//check to see if it's time to log sensor data to file
 		if (g_sensorDataFile&&g_nLoggingIntervalSec>0) {
 			time_t rawtime;
@@ -588,6 +630,10 @@ void Cleanup() {//remove any un-executed commands from the queue, do general cle
 		delete g_atod;
 		g_atod = nullptr;
 	}
+	if (g_lidar) {
+		delete g_lidar;
+		g_lidar = nullptr;
+	}
 	if (g_batteryCharge) {
 		delete g_batteryCharge;
 		g_batteryCharge = nullptr;
@@ -705,25 +751,17 @@ void GetDataLoggingPreferences() {//get data logging preferences from prefs.txt 
 		filename_prefix = NULL;
 	}
 
-	//TFMini LiDAR preferences
+	//LiDAR preferences
 	g_bUseLiDAR = (bool)prefsFile.getInteger((char *)"[lidar]",(char *)"use_lidar");//whether or not to use LiDAR measurments to detect objects
 	g_dLiDAR_IntervalSec = prefsFile.getDouble((char *)"[lidar]",(char *)"interval_sec");//interval between LiDAR measurements in seconds (if really fast LiDAR measurements are required, it should probably be sampled in its own thread, this program is currently setup to just sample the LiDAR in the sensor data collection thread)
 	g_bObjectPictures = (bool)prefsFile.getInteger((char *)"[lidar]",(char *)"object_pictures");//whether or not to take a picture whenever an obstacle is encountered.	
 	g_bLiDARSafetyMode = (bool)prefsFile.getInteger((char *)"[lidar]",(char *)"safety_mode");//whether or not to turn off thrusters whenever an obstacle is encountered
+	g_bLiDARAvoidanceMode = (bool)prefsFile.getInteger((char *)"[lidar]",(char *)"avoidance_mode");//whether or not to alter heading in order to try to avoid obstacles
 	if (g_bUseLiDAR) {
-		int fd = serialOpen ((char *)"/dev/serial0", 38400);
-		if (fd<0) {
-			g_bUseLiDAR=false;
-			sprintf (sMsg,"Error, unable to open serial device: %s\n", strerror (errno));
-			g_shiplog.LogEntry(sMsg,true);
-		}
-		else {
-			if (!m_miniLiDAR.begin(fd)) {
-				g_bUseLiDAR=false;
-				sprintf (sMsg,"Error, Unable to open serial device: %s\n", strerror (errno));
-				g_shiplog.LogEntry(sMsg,true);
-			}
-		}
+		g_lidar->TurnOn(true);//turn on LiDAR
+	}
+	else {
+		g_lidar->TurnOn(false);//turn off LiDAR to save power
 	}
 
 	//sensor preferences
@@ -827,6 +865,7 @@ int main(int argc, const char * argv[]) {
 	g_dLiDAR_IntervalSec = 0.0;
 	g_bObjectPictures = false;
 	g_bLiDARSafetyMode = false;
+	g_bLiDARAvoidanceMode = false;
 	memset(g_keyboardBuf,0,4);
 	g_keyTypedIndex = 0;
 
@@ -839,7 +878,10 @@ int main(int argc, const char * argv[]) {
 	g_networkThreadId = 0;
 	g_serportThreadId = 0;
 	g_fileCommands=nullptr;
-	g_remoteCommandsMutex = PTHREAD_MUTEX_INITIALIZER;
+	//g_remoteCommandsMutex = PTHREAD_MUTEX_INITIALIZER;
+	pthread_mutexattr_init(&g_remoteCommandsMutexAttr);
+	pthread_mutexattr_settype(&g_remoteCommandsMutexAttr, PTHREAD_MUTEX_RECURSIVE);
+	pthread_mutex_init(&g_remoteCommandsMutex, &g_remoteCommandsMutexAttr);
 	g_i2cMutex = PTHREAD_MUTEX_INITIALIZER;
 	Thruster::OneTimeSetup();//do I/O setup for thrusters (once per power-cycle), this function calls the WiringPi setup function
 
@@ -854,6 +896,7 @@ int main(int argc, const char * argv[]) {
 
 	char *i2c_filename = (char*)"/dev/i2c-1";
 	g_atod = new AToD(i2c_filename,ATOD_ADDRESS,&g_shiplog,&g_i2cMutex);
+	g_lidar = new LIDARLite(&g_i2cMutex);
 	g_batteryCharge = new BatteryCharge(&g_shiplog);
 	g_shipdiagnostics = new DiagnosticsSensor(g_atod);
 

@@ -25,6 +25,8 @@
 Navigation::Navigation(double dMagDeclination, pthread_mutex_t *i2c_mutex) {
 	m_currentGPSData=nullptr;
 	m_nMaxPriority = LOW_PRIORITY;
+	m_uiHeadingOffsetTimeout = 0;
+	m_fObstacleHeadingOffset = 0;
 	m_i2c_mutex = i2c_mutex;
 	m_uiPreviousTrimTime=0;
 	m_fEstimatedCompassError=0;
@@ -251,7 +253,7 @@ bool Navigation::CollectCompassData(void *pShipLog) {//collects a sample of comp
 	BufferCompassData(m_imuData.heading, uiCurrentSampleTime);
 	m_dYawRate = ComputeYawRate(false);
 	m_dFilteredYawRate = ComputeYawRate(true);
-	
+
 	//test
 	//char sMsg[256];
 	//sprintf(sMsg,"heading = %.1f, yaw = %.2f\n",m_imuData.heading,m_dYawRate);
@@ -416,9 +418,9 @@ double Navigation::ComputeHeadingDif(double dHeading1Deg,double dHeading2Deg) {/
 		usleep(100000);//loop every 100 ms
 		if (bReverse) {
 			unsigned int uiReverseStart = millis();
-			unsigned int uiReverseStop = uiReverseStart + 10000000;//go in reverse direction for up to 10 seconds
+			unsigned int uiReverseStop = uiReverseStart + 10000;//go in reverse direction for up to 10 seconds
 			while (millis()<uiReverseStop&&fabs(dHeadingDif)>CLOSE_ENOUGH_DEG) {
-				usleep(100000);
+				usleep(100000);//0.1 second pause
 				dHeadingDif = ComputeHeadingDif(m_imuData.heading,(double)fHeading);
 			}
 			bReverse = false;
@@ -428,14 +430,14 @@ double Navigation::ComputeHeadingDif(double dHeading1Deg,double dHeading2Deg) {/
 			break;
 		}
 		dHeadingDif = ComputeHeadingDif(m_imuData.heading,(double)fHeading);
-		
+			
 		//test
 		//sprintf(sMsg,"heading=%.1f, dif = %.1f\n",m_imuData.heading,dHeadingDif);
 		//pLog->LogEntry(sMsg,true);
 		//end test
 		dEstimatedTimeLeft = dHeadingDif / m_dFilteredYawRate;
 		//test
-		printf("dHeadingDif = %.1f, m_dFilteredYawRate = %.1f, dEstimatedTimeLeft = %.1f\n",dHeadingDif,m_dFilteredYawRate,dEstimatedTimeLeft);
+		//printf("dHeadingDif = %.1f, m_dFilteredYawRate = %.1f, dEstimatedTimeLeft = %.1f\n",dHeadingDif,m_dFilteredYawRate,dEstimatedTimeLeft);
 		//end test
 	}
 	while ((millis() - *lastNetworkCommandTimeMS)<10000&&!*bCancel) {
@@ -445,6 +447,9 @@ double Navigation::ComputeHeadingDif(double dHeading1Deg,double dHeading2Deg) {/
 	pThrust->Stop();//stop thrusters after desired heading is achieved
 	pthread_mutex_unlock(command_mutex);
 	m_uiLastCompassCheckTime=millis();
+	//test
+	printf("finished turn to compass heading\n");
+	//end test
 }
 
 //isDataReady: return true if compass data is available
@@ -505,6 +510,7 @@ void Navigation::IncrementTurningSpeed(float &fSpeedLeft,float &fSpeedRight,floa
 		//lower power mode, don't do anything
 		return;
 	}
+	fHeadingDirection += this->GetObstacleAvoidanceHeadingOffset();
 	if (pThrust->isAirBoat()) {
 		DriverAirboatForwardForTime(nTotalTimeSeconds,fMaxSpeed,fHeadingDirection,pThrusters,command_mutex,
 			lastNetworkCommandTimeMS, pShipLog, bCancel, bStopWhenDone, nPriority);
@@ -670,6 +676,7 @@ char *Navigation::GetStatusLogText() {
 	double dDistToDest=0.0;
 	
 	double dInitialHeading = ComputeHeadingAndDistToDestination(dLatitude,dLongitude,dDistToDest);//use current GPS location to get initial heading and distance to destination
+	dInitialHeading+=this->GetObstacleAvoidanceHeadingOffset();
 	TurnToCompassHeading((float)dInitialHeading, pThrusters, command_mutex, lastNetworkCommandTimeMS, pShipLog, bCancel, nPriority);//turn boat to desired heading
 	unsigned int uiStartTime = millis();
 	float fLSpeed=max(pThrust->GetLSpeed(),(float)2);//get the current speed of the left propeller 
@@ -1534,4 +1541,26 @@ int Navigation::GetNumVisibleSatellites() {//return the number of currently visi
  */
 int Navigation::GetNumSatellitesUsed() {
 	return m_nNumGPSSatellitesUsed;
+}
+
+
+/**
+ * @brief add direction offset for the "Drive" functions in this class. This function is useful for steering around obstacles.
+ * 
+ * @param fHeadingOffsetDeg  the offset angle in degrees to add on to heading angles that are determined in the "Drive" functions 
+ * @param uiTimeoutSec the length of time in seconds that the offset will be applied. 
+ */
+void Navigation::SetObstacleAvoidanceOffset(float fHeadingOffsetDeg, unsigned int uiTimeoutSec) {
+	m_uiHeadingOffsetTimeout = millis() + uiTimeoutSec*1000;
+	m_fObstacleHeadingOffset = fHeadingOffsetDeg;
+}
+
+
+float Navigation::GetObstacleAvoidanceHeadingOffset() {//get the neccessary heading offset for avoiding obstacles (if any)
+	if (m_fObstacleHeadingOffset>0) {
+		if (millis()>m_uiHeadingOffsetTimeout) {
+			m_fObstacleHeadingOffset = 0;
+		}
+	}
+	return m_fObstacleHeadingOffset;
 }

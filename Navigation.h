@@ -52,6 +52,7 @@ public:
 
 	IMU_DATASAMPLE m_imuData;//structure for holding compass, inertial data
 	//functions
+	void SetObstacleAvoidanceOffset(float fHeadingOffsetDeg, unsigned int uiTimeoutSec);//add direction offset for the "Drive" functions in this class
 	bool HaveValidGPS();//return true if we have obtained at least one sample of valid GPS data
 	double GetLatitude();//return the current latitude of the boat (as determined by GPS) in degrees
 	double GetLongitude();//return the current longitude of the boat (as determined by GPS) in degrees 
@@ -80,6 +81,8 @@ public:
 
 private:
 	//data
+	unsigned int m_uiHeadingOffsetTimeout;//time in ms when the heading offset specified in the m_fObstacelHeadingOffset variable no longer applies and should be set back to zero.
+	float m_fObstacleHeadingOffset;//a temporary heading offset (in degrees) which is used to help avoiding obstacles
 	int m_nMaxPriority;//the maximum priority for a navigation instruction that is currently being executed, if a thread issues a navigation command with less priority than this, it will pause until the higher priority thread is finished and m_nMaxPriority becomes a lower value
 	pthread_mutex_t *m_i2c_mutex;//mutex controlling access to the i2c bus
 	bool m_bGotValidGPSData;//flag indicates whether or not valid GPS data has ever been received
@@ -109,6 +112,7 @@ private:
 	double m_dFilteredYawRate;//rate at which heading of boat is changing (in degrees per second, filtered as an average of the last second of data)
 
 	//functions
+	float GetObstacleAvoidanceHeadingOffset();//get the neccessary heading offset for avoiding obstacles (if any)
 	void CheckPriority(int nPriority);//check to see if there are no other higher priority threads trying to execute a navigation command at the same time
 	void TrimAirRudder(float &fAirRudderAngle,float fHeadingError,float fDesiredHeading,void *pShipLog);//fine-tune air rudder angle in order to correct any heading error
 	float TurnToRandomAngle(void *pThrusters, pthread_mutex_t *command_mutex, unsigned int *lastNetworkCommandTimeMS, void *pShipLog, bool *bCancel, int nPriority);//turns boat to a random angle
