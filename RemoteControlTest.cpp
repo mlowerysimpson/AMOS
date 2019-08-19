@@ -602,10 +602,6 @@ void Cleanup() {//remove any un-executed commands from the queue, do general cle
 		delete g_sensorDataFile;
 		g_sensorDataFile=nullptr;
 	}
-	if (g_thrusters) {
-		delete g_thrusters;
-		g_thrusters=nullptr;
-	}
 	if (g_networkThreadId) {
 		pthread_cancel(g_networkThreadId);
 		g_networkThreadId=0;
@@ -626,6 +622,14 @@ void Cleanup() {//remove any un-executed commands from the queue, do general cle
 		pthread_cancel(g_threadFileCommandsId);
 		g_threadFileCommandsId=0;
 	}
+	if (g_fileCommands) {
+		delete g_fileCommands;
+		g_fileCommands=nullptr;
+	}
+	if (g_navigator) {
+		delete g_navigator;
+		g_navigator=nullptr;
+	}
 	if (g_atod) {
 		delete g_atod;
 		g_atod = nullptr;
@@ -638,13 +642,9 @@ void Cleanup() {//remove any un-executed commands from the queue, do general cle
 		delete g_batteryCharge;
 		g_batteryCharge = nullptr;
 	}
-	if (g_navigator) {
-		delete g_navigator;
-		g_navigator=nullptr;
-	}
-	if (g_fileCommands) {
-		delete g_fileCommands;
-		g_fileCommands=nullptr;
+	if (g_thrusters) {
+		delete g_thrusters;
+		g_thrusters=nullptr;
 	}
 	if (g_switchRelay) {
 		delete g_switchRelay;
