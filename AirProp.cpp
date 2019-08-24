@@ -9,6 +9,9 @@ AirProp::AirProp() {//AirProp constructor
 
 AirProp::~AirProp() {//destructor
 	Stop();//make sure propeller is stopped before deleting object
+	//test
+	printf("Deleted AirProp object.\n");
+	//end test
 }
 
 void AirProp::Initialize() {//initializes propeller by sending a "stopped signal"  Calling program should then pause for a few seconds to make sure that initialization has properly occurred.

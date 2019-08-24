@@ -36,6 +36,7 @@ private:
     bool m_bOpenedPort;//true if this object was used to open the serial port (i.e. it is then responsible for closing it when it is destroyed)
 
     //functions
+    void SendPowerDownSequence(int nSleepTimeMinutes);//send command to RFU220 to power down the Pi board for nSleepTimeMinutes minutes
     int OpenDefaultPort();//tries to open the default serial port, and if successful returns a file descriptor to that serial port
     float ConvertCountsToAmps(int nNumCounts);//converts an integer number of counts from an A to D to a value in counts (based on size / length of shunt resistor used)
 };

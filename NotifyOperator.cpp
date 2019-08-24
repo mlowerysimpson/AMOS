@@ -134,8 +134,10 @@ bool NotifyOperator::SendText(char *msgText,void *pShipLog) {//send text message
 }
 
 bool NotifyOperator::SendEmail(char *msgText,char *szSubjectText, void *pShipLog) {//send email message to one or more recipients
+	
 	ShipLog *pLog = (ShipLog *)pShipLog;
 	char sMsg[256];
+
 	char szDateTime[128];//used to hold the current date and time
 
 	//get date/time stamp corresponding to current date and time
@@ -143,7 +145,7 @@ bool NotifyOperator::SendEmail(char *msgText,char *szSubjectText, void *pShipLog
 	struct tm * timeinfo;
 	time (&rawtime);
 	timeinfo = localtime (&rawtime);
-	
+
 	//format date and time into szDateTime
 	strftime(szDateTime, 128, "Date: %a, %d %b %Y %H:%M:%S %z\r\n",timeinfo);
       
@@ -161,15 +163,16 @@ bool NotifyOperator::SendEmail(char *msgText,char *szSubjectText, void *pShipLog
 	g_payload_text[0] = szDateTime;
 	g_payload_text[1] = email_recipients;//,//"To: " TO "\r\n",
 	g_payload_text[2] = sender;//"From: " FROM " (Example User)\r\n",
-	sprintf(g_payload_text[3], "%s\r\n",szSubjectText);
+	g_payload_text[3] = szSubjectText;
 	g_payload_text[4] = (char *)"\r\n"; /* empty line to divide headers from body, see RFC5322 */ 
 	g_payload_text[5] = msgText;
 	g_payload_text[6] =	(char *)"\r\n";
 	g_payload_text[7] = (char *)"\r\n";
+	
 	for (int i=8;i<MAX_EMAIL_ITEMS;i++) {
 		g_payload_text[i] = NULL;
 	}
- 
+
 	CURL *curl;
 	CURLcode res = CURLE_OK;
 	struct curl_slist *recipients = NULL;

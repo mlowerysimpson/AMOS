@@ -4,14 +4,17 @@
 #include <pthread.h>
 #include "RemoteCommand.h"
 #include "SensorDataFile.h"
+#include "LIDARLite.h"
 
 class FileCommands {
 public:
-	FileCommands(char *rootFolder, char *szFilename, Navigation *pNavigator, Thruster *pThrusters, SensorDataFile *pSensorDataFile, bool *bCancel);//constructor takes path of commands filename as input
+	FileCommands(char *rootFolder, char *szFilename, Navigation *pNavigator, Thruster *pThrusters, SensorDataFile *pSensorDataFile, LIDARLite *pLidar, bool *bCancel);//constructor takes path of commands filename as input
 	~FileCommands();//destructor
 	bool m_bFileOK;//true if the file could be successfully found, opened, and parsed
+	bool m_bSleepTime;//true if it is time to put AMOS into sleep mode
 	int m_nWaitTimeSeconds;//time in seconds that execution should be paused (if a FC_WAIT file command is received)
 	REMOTE_COMMAND *GetNextCommand();	
+	double GetSleepTimeHrs();//get length of time in hours that sleep will last
 	void PrintOutCommandList();//test function for printing out list of commands
 	int DoNextCommand(pthread_mutex_t *command_mutex, unsigned int *lastNetworkCommandTimeMS, void *pShipLog);//execute the next command in the list of file commands
 	static bool doesFileExist(char *szFilename);//return true if the file exists
@@ -20,6 +23,7 @@ public:
 
 private:
 	//functions
+	void CheckTime();//check to see if it is time for a rest, time to go to sleep, or morning time.
 	int getMatchingLabelIndex(char *pLabelText);//find the index of a label that matches pLabelText
 	int DoCommand(REMOTE_COMMAND *pCommand, pthread_mutex_t *command_mutex, unsigned int *lastNetworkCommandTimeMS, void *pShipLog);//execute a particular file command
 	void AddCommand(int nCommandType, std::string sText);//adds a text-based command to the list
@@ -37,6 +41,7 @@ private:
 	bool readInFile();//read in and parse the text commands from the file (return true if successful)
 	void SaveCurrentCommand();//save the current command index to the preferences file (prefs.txt)
 
+	LIDARLite *m_pLiDAR;//object used for making LiDAR measurements (can be turned off to save a bit of power)
 	SensorDataFile *m_pSensorDataFile;//pointer to object used for storing sensor data to file
 	char *m_szRootFolder;//the folder where the prefs.txt (preferences) file is located 
 	bool *m_bCancel;//pointer to boolean variable that will be "true" when the program is ending. It should be checked to end any currently executing file commands.
@@ -46,5 +51,11 @@ private:
 	Thruster *m_pThrusters;//the 2 props that are used to propel the boat around
 	int m_nCurrentCommandIndex;//the index of the command that is currently being executed
 	float m_fLastHeadingCommandAngle;//used for storing the most recently specified heading angle
+	bool m_bRestTimeMode;//true when AMOS is in "rest", mode, responsive, but not using its air propeller. It does not execute any file commands in this mode
+	bool m_bTimeChecking;//true if we are checking to see when it is time for a rest, time to go to sleep, or morning time (default = false).
+	double m_dMorningTimeHrs;//designation of when morning time starts (in hours)
+	double m_dRestTimeHrs;//designation of when rest time starts (in hours)
+	double m_dSleepTimeHrs;//designation of when AMOS should be put to sleep (in hours)
+	int m_nNumSleepTimeChecks;//counter that gets incremented every time we check to see if it is time to go to sleep
 
 };

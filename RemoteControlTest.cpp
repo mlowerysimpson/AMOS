@@ -117,39 +117,6 @@ void ShowUsage() {
 
 }
 
-/**
- * @brief try to rotate the boat clockwise and counterclockwise until we find an angle where there is no obstacle (as determined by LiDAR)
- * 
- */
-void RotateAwayFromObstacle() {
-	const int NUM_ANGLES_TO_TRY = 7;
-	if (g_navigator==nullptr) {
-		return;
-	}
-	float rotation_angles[7];
-	rotation_angles[0] = -45;
-	rotation_angles[1] = 45;
-	rotation_angles[2] = 90;
-	rotation_angles[3] = -90;
-	rotation_angles[4] = -135;
-	rotation_angles[5] = 135;
-	rotation_angles[6] = 180;
-	float fStartHeading = (float)g_navigator->m_imuData.heading;
-	for (int i=0;i<NUM_ANGLES_TO_TRY;i++) {
-		float fTryHeading = fStartHeading + rotation_angles[i];
-		if (fTryHeading<0) fTryHeading+=360;
-		else if (fTryHeading>360) fTryHeading-=360;
-		bool bCancel = !g_bKeepGoing;
-		if (bCancel) return;
-		g_navigator->TurnToCompassHeading(fTryHeading,g_thrusters,&g_remoteCommandsMutex,&g_lastNetworkCommandTime,&g_shiplog,&bCancel,LOW_PRIORITY);
-		double dDistMeters = g_lidar->getDistance()*.01;
-		if (dDistMeters==0||dDistMeters>13) {
-			//no near objects, proceed at this angle for a while
-			g_navigator->SetObstacleAvoidanceOffset(rotation_angles[i], 60);//add direction offset for the "Drive" functions in g_navigator for 60 seconds
-		}
-	}
-}
-
 void *serportFunction(void *pParam) {//function receives commands from base station over (wireless) serial link
 	g_shiplog.LogEntry((char *)"serial port function started...\n",true);
 	g_bSerportThreadRunning=true;
@@ -311,6 +278,11 @@ void *gpsCollectionFunction(void *pParam) {
 	return nullptr;
 }
 
+/**
+ * @brief Puts AMOS into a low power state by powering down the Pi board running this program. It does this by sending a message to the RFU220 radio module, which switches a relay controlling power to the Pi board.
+ * 
+ * @param nWaitTimeSec the length of time to power down the Pi board (in minutes).
+ */
 void EnterSleepMode(int nWaitTimeSec) {
 	if (g_shipdiagnostics==nullptr) {
 		printf("No ship diagnostics object, cannot enter low power mode.\n");
@@ -339,6 +311,7 @@ void EnterSleepMode(int nWaitTimeSec) {
 			strcat(startupParams,(char *)" continue");
 		}
 		prefsFile.writeData("[startup]","params",startupParams);	
+		prefsFile.closeDataFile();
 	}
 
 	//exits this program and puts AMOS into a low-power state in which only the RFU220SU is powered up
@@ -436,6 +409,7 @@ void *sensorCollectionFunction(void *pParam) {
 							dBattVoltage,g_navigator->GetLatitude(),g_navigator->GetLongitude());
 						char *szSubject = (char *)"Low Battery Alarm!";
 						g_notifier.IssueNotification(szAlarmMsg,szSubject,(void *)&g_shiplog);
+					
 						//enter low power mode for an hour
 						EnterSleepMode(3600);
 					}
@@ -466,8 +440,13 @@ void *sensorCollectionFunction(void *pParam) {
 			double dDistMeters = g_lidar->getDistance()*.01;
 			//unsigned short signalStrength = m_miniLiDAR.getRecentSignalStrength(); //--> uncomment for TF Mini LiDAR
 			//if (signalStrength>=MIN_SIGNAL_STRENGTH&&dDistMeters<13) { //--> uncomment for TF Mini LiDAR
-			if (dDistMeters>0&&dDistMeters<13) {
+			if (dDistMeters>0.05&&dDistMeters<13) {//sometimes get 0.01 false readings, so look for > 0.05
 				//detected some sort of obstacle
+				//test
+				char szTest[256];
+				sprintf(szTest,"Object detected at %.2f m\n",dDistMeters);
+				g_shiplog.LogEntry(szTest,true);
+				//end test
 				if (g_bObjectPictures) {
 					g_vision.CaptureFrameWithDistText(dDistMeters);//capture frame of video with an estimate of the distance to the object (in m) superimposed on the picture (use autocapture settings for filename)
 				}
@@ -481,7 +460,7 @@ void *sensorCollectionFunction(void *pParam) {
 				}
 				else if (g_bLiDARAvoidanceMode) {
 					pthread_mutex_lock(&g_remoteCommandsMutex);
-					RotateAwayFromObstacle();
+					g_navigator->AddObstacleAtCurrentHeading();//inform the navigation object that there is an obstacle at the current heading
 					pthread_mutex_unlock(&g_remoteCommandsMutex);
 				}
 			}
@@ -530,7 +509,7 @@ void *fileCommandsFunction(void *pParam) {
 			if (nCommandAction==FC_WAIT) {
 				int nWaitTimeSec = g_fileCommands->m_nWaitTimeSeconds;
 				if (nWaitTimeSec>=MIN_SLEEPTIME_SEC) {
-					//incremenet index of file command and save to prefs.txt
+					//increment index of file command and save to prefs.txt
 					g_fileCommands->IncrementAndSaveCommandIndex();
 					EnterSleepMode(nWaitTimeSec);
 					return nullptr;
@@ -539,6 +518,13 @@ void *fileCommandsFunction(void *pParam) {
 					//just delay for the required number of seconds and then keep going in this thread
 					delay(nWaitTimeSec*1000);
 				}
+			}
+			else if (g_fileCommands->m_bSleepTime) {
+				//time to put AMOS to sleep
+				//increment index of file command and save to prefs.txt
+				g_fileCommands->IncrementAndSaveCommandIndex();
+				EnterSleepMode(g_fileCommands->GetSleepTimeHrs()*3600);
+				return nullptr;
 			}
 		}
 	}
@@ -649,6 +635,10 @@ void Cleanup() {//remove any un-executed commands from the queue, do general cle
 	if (g_switchRelay) {
 		delete g_switchRelay;
 		g_switchRelay = nullptr;
+	}
+	if (g_shipdiagnostics) {
+		delete g_shipdiagnostics;
+		g_shipdiagnostics = nullptr;
 	}
 }
 
@@ -897,15 +887,30 @@ int main(int argc, const char * argv[]) {
 	char *i2c_filename = (char*)"/dev/i2c-1";
 	g_atod = new AToD(i2c_filename,ATOD_ADDRESS,&g_shiplog,&g_i2cMutex);
 	g_lidar = new LIDARLite(&g_i2cMutex);
-	g_batteryCharge = new BatteryCharge(&g_shiplog);
+	g_batteryCharge = new BatteryCharge((char *)"prefs.txt",&g_shiplog);
 	g_shipdiagnostics = new DiagnosticsSensor(g_atod);
 
 	bool bContainsHelpFlag = Util::ContainsHelpFlag(argc, argv);
 	if (argc<2||bContainsHelpFlag) {
 		ShowUsage();
+		Cleanup();
 		//printf("Usage: RemoteControlTest server_ip_address |  [optional command file]\n");
 		return 1;
 	}
+
+	//check to see if battery is sufficiently charged to start program, if not, then go back to sleep
+	double dVoltage = 0.0;
+	if (g_atod->GetBatteryVoltage(dVoltage,g_batteryCharge)) {
+		if (dVoltage>5) {//make sure voltage is non-zero
+			if (!g_batteryCharge->hasEnoughChargeToStart(dVoltage)) {
+				char sMsg[256];
+				sprintf(sMsg,"Voltage measured as: %.3f V, going back to sleep to get more charge (> %.2f V).\n",dVoltage,g_batteryCharge->GetMinStartupVoltage());
+				g_shiplog.LogEntry(sMsg,true);
+				g_batteryCharge->SetInsufficientStartupCharge();
+			}
+		}
+	}
+
 	GetDataLoggingPreferences();//get data logging preferences from prefs.txt file
 
 	//test
@@ -914,7 +919,7 @@ int main(int argc, const char * argv[]) {
 
 	if (argc>=3) {
 		char *commandFilename = (char *)argv[2];
-		g_fileCommands = new FileCommands(g_rootFolder,commandFilename,g_navigator,g_thrusters,g_sensorDataFile,&g_bCancelFunctions);
+		g_fileCommands = new FileCommands(g_rootFolder,commandFilename,g_navigator,g_thrusters,g_sensorDataFile,g_lidar,&g_bCancelFunctions);
 		if (!g_fileCommands->m_bFileOK) {
 			printf("Error trying to open or parse file: %s\n",commandFilename);
 			return 2;

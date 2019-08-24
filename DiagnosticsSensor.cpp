@@ -241,23 +241,7 @@ bool DiagnosticsSensor::EnterSleepMode(int nSleepTimeSec) {
     //end test
     delay((unsigned int)(nSecondsRemainder*1000));//sleep for the seconds portion
     if (nSleepTimeMinutes>0) {//Raspberry Pi (i.e. this computer) will be powered down, need to send command to RFU220SU to tell it when to wake Pi back up
-        //test
-        printf("About to go to sleep for %d minutes.\n",nSleepTimeMinutes);
-        //end test
-        char szMinutes[16];
-        memset(szMinutes,0,16);
-        sprintf(szMinutes,"%d",nSleepTimeMinutes);
-        int nStrLength = strlen(szMinutes); 
-        //send carriage return, followed by 'd' followed by characters representing the length of time in minutes to go to sleep, followed by a carriage return out serial port
-        serialPutchar(m_fd, (unsigned char)0x0d);
-        serialPutchar(m_fd, (unsigned char)'d');
-        serialPutchar(m_fd, (unsigned char)'o');
-        serialPutchar(m_fd, (unsigned char)'w');
-        serialPutchar(m_fd, (unsigned char)'n');
-        for (int i=0;i<nStrLength;i++) {
-            serialPutchar(m_fd, (unsigned char)szMinutes[i]);
-        }
-        serialPutchar(m_fd, (unsigned char)0x0d);
+        SendPowerDownSequence(nSleepTimeMinutes);
     }
     return true;
 }
@@ -406,3 +390,22 @@ void DiagnosticsSensor::ActivityBurst() {
 	}
 }
 
+void DiagnosticsSensor::SendPowerDownSequence(int nSleepTimeMinutes) {//send command to RFU220 to power down the Pi board for nSleepTimeMinutes minutes
+    //test
+    printf("About to go to sleep for %d minutes.\n",nSleepTimeMinutes);
+    //end test
+    char szMinutes[16];
+     memset(szMinutes,0,16);
+    sprintf(szMinutes,"%d",nSleepTimeMinutes);
+    int nStrLength = strlen(szMinutes); 
+    //send carriage return, followed by 'd' followed by characters representing the length of time in minutes to go to sleep, followed by a carriage return out serial port
+    serialPutchar(m_fd, (unsigned char)0x0d);
+    serialPutchar(m_fd, (unsigned char)'d');
+    serialPutchar(m_fd, (unsigned char)'o');
+    serialPutchar(m_fd, (unsigned char)'w');
+    serialPutchar(m_fd, (unsigned char)'n');
+    for (int i=0;i<nStrLength;i++) {
+        serialPutchar(m_fd, (unsigned char)szMinutes[i]);
+    }
+    serialPutchar(m_fd, (unsigned char)0x0d);
+}

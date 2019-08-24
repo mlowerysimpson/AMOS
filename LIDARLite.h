@@ -25,6 +25,7 @@ class LIDARLite
       bool m_bInitError;//true if there was an error trying to initialize the LiDAR device
     
   private:
+      bool m_bStopped;//flag is true when the LiDAR device has been stopped (i.e. put into low power mode)
       pthread_mutex_t *m_i2c_mutex;
       bool m_bOpenedI2C_OK;
 	  bool m_bLidarInitialized_OK;

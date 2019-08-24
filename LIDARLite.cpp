@@ -28,6 +28,7 @@
  */
 LIDARLite::LIDARLite(pthread_mutex_t *i2c_mutex) {
     //make sure LiDAR is on after this object is contructed
+    m_bStopped = false;
     TurnOn(true);
     m_i2c_mutex = i2c_mutex;
     //open I2C port for LiDAR device
@@ -198,6 +199,9 @@ bool LIDARLite::reset() {//reset the device with default settings, takes approx.
  */
 unsigned short LIDARLite::getDistance() {
     if (!m_bOpenedI2C_OK) return false;
+    if (m_bStopped) {
+        return 0;
+    }
     unsigned char inBuf[2];
     unsigned char outBuf[1];
     lockmutex();
@@ -237,9 +241,11 @@ unsigned short LIDARLite::getDistance() {
 void LIDARLite::TurnOn(bool bTurnOn) {
     if (bTurnOn) {
          //set LIDAR_ON_OFF_PIN pin to input, internal pullup in LiDAR device will make it high and enable power to the LiDAR
+         m_bStopped = false;
          pinMode(LIDAR_ON_OFF_PIN, INPUT);  
     }
     else {
+        m_bStopped = true;
         pinMode(LIDAR_ON_OFF_PIN, OUTPUT);//set pin to output
         digitalWrite(LIDAR_ON_OFF_PIN, LOW);//set pin low to disable power to the LiDAR device
     }

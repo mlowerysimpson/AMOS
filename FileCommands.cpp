@@ -15,14 +15,25 @@
 //szFilename = the name of the text file that contains all of the commands to execute
 //pNavigator = pointer to navigation object used to get GPS data, compass data, compute courses, etc.
 //pThrusters = pointer to object used to control power to the boat's 2 propellers
+//pSensorDataFile = pointer to a SensorDataFile object that is used for storing sensor data to a text file.
+//pLidar = pointer to a LIDARLite object that is used for collecting LiDAR data for obstacle avoidance.
 //bCancel = pointer to boolean variable that will be "true" when the program is ending. It should be checked to end any currently executing file commands.
-FileCommands::FileCommands(char *szRootFolder, char *szFilename, Navigation *pNavigator, Thruster *pThrusters, SensorDataFile *pSensorDataFile, bool *bCancel) {//constructor, takes the file path of a commands file as argument
+FileCommands::FileCommands(char *szRootFolder, char *szFilename, Navigation *pNavigator, Thruster *pThrusters, SensorDataFile *pSensorDataFile, LIDARLite *pLidar, bool *bCancel) {//constructor, takes the file path of a commands file as argument
 	m_szRootFolder = szRootFolder;//the folder where the prefs.txt (preferences) file is located 
 	m_bCancel = bCancel;
 	m_pSensorDataFile = pSensorDataFile;
+	m_pLiDAR = pLidar;
 	m_bFileOK = false;
+	m_bRestTimeMode = false;
+	m_bTimeChecking = false;
+	m_bSleepTime = false;
+	m_dMorningTimeHrs = 0.0;
+	m_dRestTimeHrs = 0.0;
+	m_dSleepTimeHrs = 0.0;
 	m_szFilename=nullptr;
 	m_nWaitTimeSeconds = 0;
+	m_nNumSleepTimeChecks = 0;
+	
 	if (doesFileExist(szFilename)) {
 		int nFilenameLength =strlen(szFilename);
 		m_szFilename = new char[nFilenameLength+1];
@@ -229,6 +240,55 @@ bool FileCommands::parseLine(std::string sLine) {//parse command from line of te
 			return true;
 		}
 	}
+	int nRestTimeIndex = sLine.find("rest_time");
+	if (nRestTimeIndex>=0) {//define a "rest-time" for AMOS when it should power down the air prop, stop executing file commands, and let the solar panel charge up a bit before dark
+		int i = skipToNumericVal(sLine, nWaitForIndex+9);
+		if (i<0) return false;
+		std::string sRemainder = sLine.substr(i);
+		int nTimeHrs=0, nTimeMin=0, nTimeSec=0;//get time in HH:MM:SS format
+		if (sscanf(sRemainder.c_str(),"%d:%d:%d",&nTimeHrs,&nTimeMin,&nTimeSec)==3) {
+			//parsed desired time in HH:MM:SS format
+			this->m_dRestTimeHrs = nTimeHrs + nTimeMin/60.0 + nTimeSec/3600.0;
+			this->m_bTimeChecking = true;
+			return true;
+		}
+		else {
+			return false;//time is not formatted correctly?
+		}
+	}
+	int nSleepTimeIndex = sLine.find("sleep_time");
+	if (nSleepTimeIndex>=0) {
+		int i = skipToNumericVal(sLine, nWaitForIndex+10);
+		if (i<0) return false;
+		std::string sRemainder = sLine.substr(i);
+		int nTimeHrs=0, nTimeMin=0, nTimeSec=0;//get time in HH:MM:SS format
+		if (sscanf(sRemainder.c_str(),"%d:%d:%d",&nTimeHrs,&nTimeMin,&nTimeSec)==3) {
+			//parsed desired time in HH:MM:SS format
+			this->m_dSleepTimeHrs = nTimeHrs + nTimeMin/60.0 + nTimeSec/3600.0;
+			this->m_bTimeChecking = true;
+			return true;
+		}
+		else {
+			return false;//time is not formatted correctly?
+		}
+	}
+	int nMorningTimeIndex = sLine.find("morning_time");
+	if (nMorningTimeIndex>=0) {//define a "morning-time" for AMOS when it can power up the air prop, resume execution of file commands, and start moving around
+		int i = skipToNumericVal(sLine, nWaitForIndex+12);
+		if (i<0) return false;
+		std::string sRemainder = sLine.substr(i);
+		int nTimeHrs=0, nTimeMin=0, nTimeSec=0;//get time in HH:MM:SS format
+		if (sscanf(sRemainder.c_str(),"%d:%d:%d",&nTimeHrs,&nTimeMin,&nTimeSec)==3) {
+			//parsed desired time in HH:MM:SS format
+			this->m_dMorningTimeHrs = nTimeHrs + nTimeMin/60.0 + nTimeSec/3600.0;
+			this->m_bTimeChecking = true;
+			return true;
+		}
+		else {
+			return false;//time is not formatted correctly?
+		}
+	}
+	
 	//unknown command or text, just ignore and return true
 	return true;
 }
@@ -417,6 +477,14 @@ void FileCommands::AddCommand(int nCommandType, int nTimeHrs, int nTimeMin, int 
 
 //PrintOutCommandList: test function for printing out list of commands
 void FileCommands::PrintOutCommandList() {//test function for printing out list of commands
+	if (this->m_bTimeChecking) {
+		printf("Morning Time: %.2f hrs\n",m_dMorningTimeHrs);
+		printf("Rest Time: %.2f hrs\n",m_dRestTimeHrs);
+		printf("Sleep TIme: %.2f hrs\n",m_dSleepTimeHrs);
+	}
+	else {
+		printf("No time checking in script file.\n");
+	}
 	int nNumCommands = m_commandList.size();
 	for (int i=0;i<nNumCommands;i++) {
 		if (m_commandList[i]) {
@@ -500,8 +568,9 @@ std::string FileCommands::trimEndOfText(std::string sText) {//get rid of carriag
  */
 int FileCommands::DoNextCommand(pthread_mutex_t *command_mutex, unsigned int *lastNetworkCommandTimeMS, void *pShipLog) {
 	int nNumCommands = m_commandList.size();
-	if (nNumCommands<=0||m_nCurrentCommandIndex>=nNumCommands||!m_pNavigator->isDataReady()) {//no valid commands or we have finished all of the available commands
-		usleep(1000000);//just pause in this thread, since there are no commands to execute at the moment, or the navigator object is not ready yet (ex: no compass data)
+	CheckTime();//check to see if it is time to rest, go to sleep, or morning time yet
+	if (nNumCommands<=0||m_nCurrentCommandIndex>=nNumCommands||!m_pNavigator->isDataReady()||m_bRestTimeMode) {//no valid commands or we have finished all of the available commands
+		usleep(1000000);//just pause in this thread, since there are no commands to execute at the moment, or the navigator object is not ready yet (ex: no compass data), or AMOS is in rest mode
 		return 0;
 	}
 	int nRetval = 0;
@@ -677,4 +746,65 @@ void FileCommands::SaveCurrentCommand() {//save the current command index to the
 void FileCommands::IncrementAndSaveCommandIndex() {
 	m_nCurrentCommandIndex++;
 	SaveCurrentCommand();
+}
+
+void FileCommands::CheckTime() {//check to see if it is time for a rest, time to go to sleep, or morning-time.
+	if (!m_bTimeChecking) {//not bothering with time checking
+		this->m_bRestTimeMode = false;
+		return;
+	}
+	time_t rawtime;
+	struct tm * timeinfo;
+	time (&rawtime);
+	timeinfo = localtime (&rawtime);
+	double dHrsToday = timeinfo->tm_hour + timeinfo->tm_min/60.0 + timeinfo->tm_sec/3600.0;//number of hours elapsed so far today
+	if (dHrsToday<m_dSleepTimeHrs) {
+		m_nNumSleepTimeChecks++;
+	}
+	else if (m_nNumSleepTimeChecks>0) {
+		m_bSleepTime = true;
+	}
+	if (this->m_dRestTimeHrs>0.0) {
+		if (dHrsToday>=m_dRestTimeHrs&&!m_bRestTimeMode) {//it is now time to rest
+			m_bRestTimeMode = true;
+			//test
+			printf("Entering rest mode.\n");
+			//end test
+			if (this->m_pThrusters!=nullptr) {
+				this->m_pThrusters->Stop();
+			}
+			if (m_pLiDAR!=nullptr) {
+				m_pLiDAR->TurnOn(false);//turn off LiDAR to save a bit of power
+			}
+			return;
+		}
+	}
+	if (m_bRestTimeMode) {
+		if (dHrsToday<m_dRestTimeHrs) {
+			if (dHrsToday>=m_dMorningTimeHrs) {
+				//it is now morning time
+				m_bRestTimeMode = false;
+				if (m_pLiDAR!=nullptr) {
+					//make sure that LiDAR is turned on
+					m_pLiDAR->TurnOn(true);
+				}
+			}
+		}
+	}
+}
+
+/**
+ * @brief get length of time in hours that sleep will last
+ * 
+ * @return double the length of time in hours that the sleep will last
+ */
+double FileCommands::GetSleepTimeHrs() {
+	double dSleepTimeHrs = 0.0;
+	if (m_dSleepTimeHrs>=this->m_dMorningTimeHrs) {
+		dSleepTimeHrs = 24 - (m_dSleepTimeHrs - m_dMorningTimeHrs);
+	}
+	else {
+		dSleepTimeHrs = m_dMorningTimeHrs - m_dSleepTimeHrs;
+	}
+	return dSleepTimeHrs;
 }

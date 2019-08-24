@@ -25,12 +25,15 @@
 Navigation::Navigation(double dMagDeclination, pthread_mutex_t *i2c_mutex) {
 	m_currentGPSData=nullptr;
 	m_nMaxPriority = LOW_PRIORITY;
-	m_uiHeadingOffsetTimeout = 0;
 	m_fObstacleHeadingOffset = 0;
 	m_i2c_mutex = i2c_mutex;
 	m_uiPreviousTrimTime=0;
 	m_fEstimatedCompassError=0;
 	m_uiLastCompassCheckTime=0;
+	m_nNumObstacles = 0;
+	for (int i=0;i<MAX_NUM_OBSTACLES;i++) {
+		m_obstacles[i] = nullptr;
+	}
 	m_bGotValidGPSData=false;
 	m_dMagDeclination = dMagDeclination;
 	m_gps_rec = new gpsmm("localhost",DEFAULT_GPSD_PORT);//create GPS receiver object
@@ -112,6 +115,14 @@ Navigation::~Navigation() {
 		delete m_compassAdjustment;
 		m_compassAdjustment = nullptr;
 	}
+	//delte found obstacles (if any)
+	for (int i=0;i<m_nNumObstacles;i++) {
+		if (m_obstacles[i]) {
+			delete m_obstacles[i];
+			m_obstacles[i] = nullptr;
+		}
+	}
+	m_nNumObstacles = 0;
 }
 
 /**
@@ -438,6 +449,8 @@ double Navigation::ComputeHeadingDif(double dHeading1Deg,double dHeading2Deg) {/
 		dEstimatedTimeLeft = dHeadingDif / m_dFilteredYawRate;
 		//test
 		//printf("dHeadingDif = %.1f, m_dFilteredYawRate = %.1f, dEstimatedTimeLeft = %.1f\n",dHeadingDif,m_dFilteredYawRate,dEstimatedTimeLeft);
+		sprintf(sMsg,"dHeadingDif = %.1f, m_dFilteredYawRate = %.1f, dEstimatedTimeLeft = %.1f\n",dHeadingDif,m_dFilteredYawRate,dEstimatedTimeLeft);
+		pLog->LogEntry(sMsg,true);
 		//end test
 	}
 	while ((millis() - *lastNetworkCommandTimeMS)<10000&&!*bCancel) {
@@ -510,7 +523,6 @@ void Navigation::IncrementTurningSpeed(float &fSpeedLeft,float &fSpeedRight,floa
 		//lower power mode, don't do anything
 		return;
 	}
-	fHeadingDirection += this->GetObstacleAvoidanceHeadingOffset();
 	if (pThrust->isAirBoat()) {
 		DriverAirboatForwardForTime(nTotalTimeSeconds,fMaxSpeed,fHeadingDirection,pThrusters,command_mutex,
 			lastNetworkCommandTimeMS, pShipLog, bCancel, bStopWhenDone, nPriority);
@@ -676,7 +688,7 @@ char *Navigation::GetStatusLogText() {
 	double dDistToDest=0.0;
 	
 	double dInitialHeading = ComputeHeadingAndDistToDestination(dLatitude,dLongitude,dDistToDest);//use current GPS location to get initial heading and distance to destination
-	dInitialHeading+=this->GetObstacleAvoidanceHeadingOffset();
+	dInitialHeading+=this->GetObstacleAvoidanceHeadingOffset((float)dInitialHeading);
 	TurnToCompassHeading((float)dInitialHeading, pThrusters, command_mutex, lastNetworkCommandTimeMS, pShipLog, bCancel, nPriority);//turn boat to desired heading
 	unsigned int uiStartTime = millis();
 	float fLSpeed=max(pThrust->GetLSpeed(),(float)2);//get the current speed of the left propeller 
@@ -755,6 +767,7 @@ char *Navigation::GetStatusLogText() {
 		pthread_mutex_unlock(command_mutex);
 		usleep(100000);//pause thread for 100 ms
 		dDesiredHeading = ComputeHeadingAndDistToDestination(dLatitude,dLongitude,dDistToDest);//use current GPS location to get heading and distance to destination
+		dDesiredHeading+= this->GetObstacleAvoidanceHeadingOffset((float)dDesiredHeading);//add on offset for avoiding obstacles (if any)
 	}
 	//must have gotten to destination (or within CLOSE_ENOUGH_M)
 	while ((millis() - *lastNetworkCommandTimeMS)<10000&&!*bCancel) {
@@ -1389,9 +1402,10 @@ void Navigation::DriverAirboatForwardForTime(int nTotalTimeSeconds, float fMaxSp
 			if (fAirSpeed>fMaxSpeed) {//check maximum speed specified in function call
 				fAirSpeed=fMaxSpeed;
 			}
-			float fHeadingError = m_imuData.heading - fHeadingDirection;
+			float fObstacleOffset=this->GetObstacleAvoidanceHeadingOffset(fHeadingDirection);//add on angular offset for avoiding obstacles (if any)
+			float fHeadingError = m_imuData.heading - (fHeadingDirection+fObstacleOffset);
 
-			TrimAirRudder(fAirRudderAngle,fHeadingError,fHeadingDirection,pShipLog);	
+			TrimAirRudder(fAirRudderAngle,fHeadingError,fHeadingDirection+fObstacleOffset,pShipLog);	
 			if (lastNetworkCommandTimeMS!=nullptr) {
 				while ((millis() - *lastNetworkCommandTimeMS)<10000&&!*bCancel) {
 					usleep(1000000);//delay executing thruster actions after recent network commands
@@ -1543,24 +1557,106 @@ int Navigation::GetNumSatellitesUsed() {
 	return m_nNumGPSSatellitesUsed;
 }
 
+float Navigation::GetObstacleAvoidanceHeadingOffset(float fDesiredHeading) {//get the neccessary heading offset for avoiding obstacles (if any)
+	const int OBSTACLE_TIMEOUT_MS = 60000;//remove any obstacles that were detected more than OBSTACLE_TIMEOUT_MS milliseconds ago.
+	const int OBSTACLE_THRESHOLD_ANGLE = 45;//require chosen heading to be at least this far away (in degrees) from any obstacles
+	unsigned int uiCurrentTime = millis();
+	float fHeadingOffset = 0;
+	float rotation_angles[7];
+	rotation_angles[0] = -45;
+	rotation_angles[1] = 45;
+	rotation_angles[2] = 90;
+	rotation_angles[3] = -90;
+	rotation_angles[4] = -135;
+	rotation_angles[5] = 135;
+	rotation_angles[6] = 180;
 
-/**
- * @brief add direction offset for the "Drive" functions in this class. This function is useful for steering around obstacles.
- * 
- * @param fHeadingOffsetDeg  the offset angle in degrees to add on to heading angles that are determined in the "Drive" functions 
- * @param uiTimeoutSec the length of time in seconds that the offset will be applied. 
- */
-void Navigation::SetObstacleAvoidanceOffset(float fHeadingOffsetDeg, unsigned int uiTimeoutSec) {
-	m_uiHeadingOffsetTimeout = millis() + uiTimeoutSec*1000;
-	m_fObstacleHeadingOffset = fHeadingOffsetDeg;
+	
+	int nNumRemoved = 0;
+	for (int i=m_nNumObstacles-1;i>=0;i--) {
+		if (m_obstacles[i]!=nullptr) {
+			if ((m_obstacles[i]->uiFoundTime+OBSTACLE_TIMEOUT_MS) < uiCurrentTime) {//obstacle is more than OBSTACLE_TIMEOUT_MS old
+				//test
+				printf("removing obstacle at index %d\n",i);
+				//end test
+				delete m_obstacles[i];
+				m_obstacles[i] = nullptr;
+				//test
+				printf("removed obstacle.\n");
+				//end test
+				for (int j=i;j<m_nNumObstacles-1;j++) {//shift obstacles down
+					m_obstacles[j]=m_obstacles[j+1];
+				}
+				nNumRemoved++;
+			}
+		}
+	}
+	m_nNumObstacles-=nNumRemoved;
+	float fMinObstacleAngle = 360;//minimum angular difference between desired heading and angle of obstacle(s)
+	//first make sure that desired heading is between 0 and 360
+	if (fDesiredHeading<0) fDesiredHeading+=360;
+	else if (fDesiredHeading>=360) fDesiredHeading-=360;
+	for (int i=0;i<m_nNumObstacles;i++) {
+		double dHeadingDif = fabs(ComputeHeadingDif((double)fDesiredHeading,(double)m_obstacles[i]->nHeading));
+		if (dHeadingDif<fMinObstacleAngle) {
+			fMinObstacleAngle = (float)dHeadingDif;
+		}
+	}
+	if (fMinObstacleAngle>OBSTACLE_THRESHOLD_ANGLE) {
+		//desired heading is not directly pointed towards a previously found obstacle, so no heading offset is required
+		return 0;
+	}
+	//try each of the above defined rotation_angles as offsets to see how they fare
+	for (int j=0;j<7;j++) {
+		fMinObstacleAngle = 360;//minimum angular difference between desired heading and angle of obstacle(s)
+		for (int i=0;i<m_nNumObstacles;i++) {
+			float fTryAngle = fDesiredHeading + rotation_angles[j];
+			if (fTryAngle<0) fTryAngle+=360;
+			else if (fTryAngle>360) fTryAngle-=360;
+			double dHeadingDif = fabs(ComputeHeadingDif((double)fTryAngle,(double)m_obstacles[i]->nHeading));
+			if (dHeadingDif<fMinObstacleAngle) {
+				fMinObstacleAngle = (float)dHeadingDif;
+			}
+		}
+		if (fMinObstacleAngle>OBSTACLE_THRESHOLD_ANGLE) {
+			//not pointing directly towards an obstacle when using this rotation offset, so use it
+			return rotation_angles[j];
+		}
+	}
+	//none of the rotation offsets worked, just try a random offset
+	float fRandomAngle=(float)(360*((float)rand()) / RAND_MAX) - 180;//get a random angle between -180 and 180
+	//test
+	printf("Applying random offset of %.1f deg.\n",fRandomAngle);
+	//end test
+	return fRandomAngle;
 }
 
 
-float Navigation::GetObstacleAvoidanceHeadingOffset() {//get the neccessary heading offset for avoiding obstacles (if any)
-	if (m_fObstacleHeadingOffset>0) {
-		if (millis()>m_uiHeadingOffsetTimeout) {
-			m_fObstacleHeadingOffset = 0;
+/**
+ * @brief Inform this Navigation object that there is an obstacle at the current heading
+ * 
+ */
+void Navigation::AddObstacleAtCurrentHeading() {//inform this Navigation object that there is an obstacle at the current heading
+	int nCurrentHeading = (int)(m_imuData.heading+.5);//get current heading expressed as integer
+	//test
+	printf("Adding obstacle, nCurrentHeading = %d\n",nCurrentHeading);
+	//end test
+	//check to see if obstacle was added already, and if so update its associated time
+	unsigned int uiCurrentTime = millis();
+	bool bAlreadyExists = false;
+	for (int i=0;i<m_nNumObstacles;i++) {
+		if (m_obstacles[i]->nHeading==nCurrentHeading) {
+			bAlreadyExists = true;
+			m_obstacles[i]->uiFoundTime = uiCurrentTime;
+			break;
 		}
 	}
-	return m_fObstacleHeadingOffset;
+	if (!bAlreadyExists&&m_nNumObstacles<MAX_NUM_OBSTACLES) {
+		//add obstacle
+		OBSTACLE_FOUND *pNewObstacle = new OBSTACLE_FOUND;
+		pNewObstacle->nHeading = nCurrentHeading;
+		pNewObstacle->uiFoundTime = uiCurrentTime;
+		m_obstacles[m_nNumObstacles] = pNewObstacle;
+		m_nNumObstacles++;
+	}
 }
