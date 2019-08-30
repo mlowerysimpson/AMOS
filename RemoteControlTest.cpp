@@ -284,6 +284,9 @@ void *gpsCollectionFunction(void *pParam) {
  * @param nWaitTimeSec the length of time to power down the Pi board (in minutes).
  */
 void EnterSleepMode(int nWaitTimeSec) {
+	if (nWaitTimeSec<MIN_SLEEPTIME_SEC) {//power down AMOS if the wait time is MIN_SLEEPTIME_SEC seconds or longer
+		return;
+	}
 	if (g_shipdiagnostics==nullptr) {
 		printf("No ship diagnostics object, cannot enter low power mode.\n");
 		return;
@@ -311,18 +314,16 @@ void EnterSleepMode(int nWaitTimeSec) {
 			strcat(startupParams,(char *)" continue");
 		}
 		prefsFile.writeData("[startup]","params",startupParams);	
-		prefsFile.closeDataFile();
 	}
-
+	prefsFile.closeDataFile();
 	//exits this program and puts AMOS into a low-power state in which only the RFU220SU is powered up
 	if (!g_shipdiagnostics->EnterSleepMode(nWaitTimeSec)) {
 		printf("Error trying to enter low power mode.\n");
 		return;
 	}
-	if (nWaitTimeSec>=MIN_SLEEPTIME_SEC) {//power down AMOS if the wait time is 1 minute or longer
-		g_bKeepGoing = false;
-		g_bEnteringSleepMode = true;
-	}
+	//command has been sent to go to sleep, RFU220 should pause for 15 seconds, and then power down the Pi running this program. Calling function needs to call system("halt") before that
+	g_bKeepGoing = false;
+	g_bEnteringSleepMode = true;
 }
 
 
@@ -574,7 +575,7 @@ void Cleanup() {//remove any un-executed commands from the queue, do general cle
 		if (g_bGPSThreadRunning) {
 			printf("GPS thread did not exit cleanly.\n");
 		}
-		if (g_bSensorThreadRunning) {
+		if (g_bSensorThreadRunning&&!g_bEnteringSleepMode) {
 			printf("Sensor thread did not exit cleanly.\n");
 		}
 	}
@@ -600,7 +601,7 @@ void Cleanup() {//remove any un-executed commands from the queue, do general cle
 		pthread_cancel(g_gpsThreadId);
 		g_gpsThreadId=0;
 	}
-	if (g_sensorThreadId) {
+	if (g_sensorThreadId&&!g_bEnteringSleepMode) {
 		pthread_cancel(g_sensorThreadId);
 		g_sensorThreadId=0;
 	}
@@ -636,7 +637,7 @@ void Cleanup() {//remove any un-executed commands from the queue, do general cle
 		delete g_switchRelay;
 		g_switchRelay = nullptr;
 	}
-	if (g_shipdiagnostics) {
+	if (g_shipdiagnostics&&!g_bEnteringSleepMode) {//need to preserve g_shipdiagnostics if we are entering sleep mode
 		delete g_shipdiagnostics;
 		g_shipdiagnostics = nullptr;
 	}
@@ -900,17 +901,18 @@ int main(int argc, const char * argv[]) {
 
 	//check to see if battery is sufficiently charged to start program, if not, then go back to sleep
 	double dVoltage = 0.0;
+	bool bLowStartupVoltage = false;
 	if (g_atod->GetBatteryVoltage(dVoltage,g_batteryCharge)) {
 		if (dVoltage>5) {//make sure voltage is non-zero
 			if (!g_batteryCharge->hasEnoughChargeToStart(dVoltage)) {
 				char sMsg[256];
-				sprintf(sMsg,"Voltage measured as: %.3f V, going back to sleep to get more charge (> %.2f V).\n",dVoltage,g_batteryCharge->GetMinStartupVoltage());
+				sprintf(sMsg,"Startup voltage is: %.3f V, should be > %.2f V.\n",dVoltage,g_batteryCharge->GetMinStartupVoltage());
 				g_shiplog.LogEntry(sMsg,true);
 				g_batteryCharge->SetInsufficientStartupCharge();
+				bLowStartupVoltage = true;
 			}
 		}
 	}
-
 	GetDataLoggingPreferences();//get data logging preferences from prefs.txt file
 
 	//test
@@ -927,6 +929,9 @@ int main(int argc, const char * argv[]) {
 		if (argc>=4) {
 			if (strcmp(argv[3],(char *)"continue")==0) {
 				g_fileCommands->ContinueFromPrevious();//continue at the last known stage of the file command (i.e. from previous program instance, useful for example in picking up where you left off if the program crashes for some mysterious reason)
+				/*if (bLowStartupVoltage) {
+					g_fileCommands->DriveToNearestSunnySpot(g_batteryCharge);
+				}*/
 			}
 		} 
 		//test

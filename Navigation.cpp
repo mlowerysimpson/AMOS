@@ -1576,14 +1576,8 @@ float Navigation::GetObstacleAvoidanceHeadingOffset(float fDesiredHeading) {//ge
 	for (int i=m_nNumObstacles-1;i>=0;i--) {
 		if (m_obstacles[i]!=nullptr) {
 			if ((m_obstacles[i]->uiFoundTime+OBSTACLE_TIMEOUT_MS) < uiCurrentTime) {//obstacle is more than OBSTACLE_TIMEOUT_MS old
-				//test
-				printf("removing obstacle at index %d\n",i);
-				//end test
 				delete m_obstacles[i];
 				m_obstacles[i] = nullptr;
-				//test
-				printf("removed obstacle.\n");
-				//end test
 				for (int j=i;j<m_nNumObstacles-1;j++) {//shift obstacles down
 					m_obstacles[j]=m_obstacles[j+1];
 				}
@@ -1638,9 +1632,6 @@ float Navigation::GetObstacleAvoidanceHeadingOffset(float fDesiredHeading) {//ge
  */
 void Navigation::AddObstacleAtCurrentHeading() {//inform this Navigation object that there is an obstacle at the current heading
 	int nCurrentHeading = (int)(m_imuData.heading+.5);//get current heading expressed as integer
-	//test
-	printf("Adding obstacle, nCurrentHeading = %d\n",nCurrentHeading);
-	//end test
 	//check to see if obstacle was added already, and if so update its associated time
 	unsigned int uiCurrentTime = millis();
 	bool bAlreadyExists = false;

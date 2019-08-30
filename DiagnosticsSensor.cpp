@@ -234,12 +234,7 @@ bool DiagnosticsSensor::EnterSleepMode(int nSleepTimeSec) {
         }
         m_bOpenedPort = true;
     }
-    int nSleepTimeMinutes = nSleepTimeSec / 60 - 1;//send the length of time in minutes to the RFU220SU (since it can only resolve integers up to 32767)
-    int nSecondsRemainder = 60 + nSleepTimeSec % 60;//remainder portion (in seconds), just pause for this time
-    //test
-    printf("delay for %d seconds...\n",nSecondsRemainder);
-    //end test
-    delay((unsigned int)(nSecondsRemainder*1000));//sleep for the seconds portion
+    int nSleepTimeMinutes = nSleepTimeSec / 60;//send the length of time in minutes to the RFU220SU (since it can only resolve integers up to 32767)
     if (nSleepTimeMinutes>0) {//Raspberry Pi (i.e. this computer) will be powered down, need to send command to RFU220SU to tell it when to wake Pi back up
         SendPowerDownSequence(nSleepTimeMinutes);
     }

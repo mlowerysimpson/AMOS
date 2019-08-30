@@ -480,7 +480,7 @@ void FileCommands::PrintOutCommandList() {//test function for printing out list 
 	if (this->m_bTimeChecking) {
 		printf("Morning Time: %.2f hrs\n",m_dMorningTimeHrs);
 		printf("Rest Time: %.2f hrs\n",m_dRestTimeHrs);
-		printf("Sleep TIme: %.2f hrs\n",m_dSleepTimeHrs);
+		printf("Sleep Time: %.2f hrs\n",m_dSleepTimeHrs);
 	}
 	else {
 		printf("No time checking in script file.\n");
