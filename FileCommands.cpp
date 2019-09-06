@@ -21,18 +21,20 @@
 FileCommands::FileCommands(char *szRootFolder, char *szFilename, Navigation *pNavigator, Thruster *pThrusters, SensorDataFile *pSensorDataFile, LIDARLite *pLidar, bool *bCancel) {//constructor, takes the file path of a commands file as argument
 	m_szRootFolder = szRootFolder;//the folder where the prefs.txt (preferences) file is located 
 	m_bCancel = bCancel;
+	m_pBatteryCharge = nullptr;
 	m_pSensorDataFile = pSensorDataFile;
 	m_pLiDAR = pLidar;
 	m_bFileOK = false;
 	m_bRestTimeMode = false;
 	m_bTimeChecking = false;
 	m_bSleepTime = false;
+	m_bTravelToSunnySpot = false;
 	m_dMorningTimeHrs = 0.0;
+	m_dLowStartupVoltage = 0.0;
 	m_dRestTimeHrs = 0.0;
 	m_dSleepTimeHrs = 0.0;
 	m_szFilename=nullptr;
 	m_nWaitTimeSeconds = 0;
-	m_nNumSleepTimeChecks = 0;
 	
 	if (doesFileExist(szFilename)) {
 		int nFilenameLength =strlen(szFilename);
@@ -44,6 +46,7 @@ FileCommands::FileCommands(char *szRootFolder, char *szFilename, Navigation *pNa
 	m_pNavigator = pNavigator;//the navigation object used for getting GPS data, compass data, plotting courses, etc.
 	m_pThrusters = pThrusters;//the 2 props that are used to propel the boat around
 	m_nCurrentCommandIndex=0;
+	CheckTime();
 }
 
 FileCommands::~FileCommands() {//destructor
@@ -172,6 +175,22 @@ bool FileCommands::parseLine(std::string sLine) {//parse command from line of te
 		}
 		else {
 			return false;//GPS waypoint is not formatted correctly(?)
+		}
+	}
+	int nSafepointIndex = sLine.find("safepoint");
+	if (nSafepointIndex>=0) {//gps location of a potential "safe point", ideal for solar re-charging
+		int i = skipToNumericVal(sLine, nSafepointIndex+9);
+		if (i<0) return false;
+		std::string sRemainder = sLine.substr(i);
+		double dSafeLat=0.0, dSafeLong=0.0;
+		if (sscanf(sRemainder.c_str(),"%lf,%lf",&dSafeLat,&dSafeLong)==2) {
+			//parsed safe point latitude and longitude, add to the list of safe points
+			m_safeLat.push_back(dSafeLat);
+			m_safeLong.push_back(dSafeLong);
+			return true;
+		}
+		else {
+			return false;//safe point is not formatted correctly(?)
 		}
 	}
 	int nGridSampleIndex = sLine.find("grid_sample");
@@ -485,6 +504,15 @@ void FileCommands::PrintOutCommandList() {//test function for printing out list 
 	else {
 		printf("No time checking in script file.\n");
 	}
+	int nNumSafePoints = m_safeLat.size();
+	if (nNumSafePoints>0) {
+		for (int i=0;i<nNumSafePoints;i++) {
+			printf("Safe point: %.6f, %.6f\n",m_safeLat[i],m_safeLong[i]);
+		}
+	}
+	else {
+		printf("No safe points defined.\n");
+	}
 	int nNumCommands = m_commandList.size();
 	for (int i=0;i<nNumCommands;i++) {
 		if (m_commandList[i]) {
@@ -559,7 +587,7 @@ std::string FileCommands::trimEndOfText(std::string sText) {//get rid of carriag
 
 
 /**
- * @brief execute the next command in the list of file commands
+ * @brief execute the next command in the list of fidle commands
  * 
  * @param command_mutex mutex to control access to propellers
  * @param lastNetworkCommandTimeMS pointer to the last time (in ms since program started) that a network command was issued
@@ -567,6 +595,31 @@ std::string FileCommands::trimEndOfText(std::string sText) {//get rid of carriag
  * @return 0 if no action is required by the calling function, otherwise return a non-zero code (see CommandList.h)
  */
 int FileCommands::DoNextCommand(pthread_mutex_t *command_mutex, unsigned int *lastNetworkCommandTimeMS, void *pShipLog) {
+	if (m_bTravelToSunnySpot) {
+		//need to first travel to a sunny spot to get recharged before doing anything else
+		double dSunnyLatitude=0.0;//latitude of point where it is hoped there will be some sunshine for recharging
+		double dSunnyLongitude=0.0;//longitude of point where it is hoped there will be some sunshine for recharging
+		double dCurrentLatitude=m_pNavigator->GetLatitude();//current latitude of boat
+		double dCurrentLongitude=m_pNavigator->GetLongitude();//current longitude of boat
+		if (dCurrentLatitude==0.0&&dCurrentLongitude==0.0) {//GPS data is not ready yet, so just pause for a bit and then return for now
+			usleep(1000000);
+			return 0;
+		}
+		if (GetClosestSafePoint(dCurrentLatitude,dCurrentLongitude,dSunnyLatitude,dSunnyLongitude)) {
+			ShipLog *pLog = (ShipLog *)pShipLog;
+			char sMsg[256];
+			sprintf(sMsg,"Startup voltage was only: %.2f V. Driving to %.6f, %.6f to look for more sun.",m_dLowStartupVoltage,dSunnyLatitude,dSunnyLongitude);
+			pLog->LogEntry(sMsg,true);
+			m_pNavigator->SetDriveTimeoutSeconds(300);//timeout on DriveToLocation function after 5 minutes in order to avoid straining battery too much
+			m_pNavigator->DriveToLocation(dSunnyLatitude,dSunnyLongitude,(void *)m_pThrusters,command_mutex,lastNetworkCommandTimeMS,pShipLog,1,m_bCancel,LOW_PRIORITY);
+			m_pNavigator->SetDriveTimeoutSeconds(0);//disable timeouts for DriveToLocation function
+		}
+		if (m_pBatteryCharge!=nullptr) {
+			m_pBatteryCharge->SetInsufficientStartupCharge();//indicate that boat should enter a sleep state for faster recharging. Hopefully it won't drift too much from the sunny location during that time.
+		}
+		m_bTravelToSunnySpot = false;
+		return 0;
+	}
 	int nNumCommands = m_commandList.size();
 	CheckTime();//check to see if it is time to rest, go to sleep, or morning time yet
 	if (nNumCommands<=0||m_nCurrentCommandIndex>=nNumCommands||!m_pNavigator->isDataReady()||m_bRestTimeMode) {//no valid commands or we have finished all of the available commands
@@ -574,6 +627,12 @@ int FileCommands::DoNextCommand(pthread_mutex_t *command_mutex, unsigned int *la
 		return 0;
 	}
 	int nRetval = 0;
+	//test
+	if (m_bTravelToSunnySpot) {
+		usleep(1000000);//just pause in this thread, since there are no commands to execute at the moment, or the navigator object is not ready yet (ex: no compass data), or AMOS is in rest mode
+		return 0;
+	}
+	//end test
 	if (m_commandList[m_nCurrentCommandIndex]) {
 		SaveCurrentCommand();//save the current command index to the preferences file (prefs.txt)
 		nRetval = DoCommand(m_commandList[m_nCurrentCommandIndex], command_mutex, lastNetworkCommandTimeMS, pShipLog);
@@ -758,12 +817,6 @@ void FileCommands::CheckTime() {//check to see if it is time for a rest, time to
 	time (&rawtime);
 	timeinfo = localtime (&rawtime);
 	double dHrsToday = timeinfo->tm_hour + timeinfo->tm_min/60.0 + timeinfo->tm_sec/3600.0;//number of hours elapsed so far today
-	if (dHrsToday<m_dSleepTimeHrs) {
-		m_nNumSleepTimeChecks++;
-	}
-	else if (m_nNumSleepTimeChecks>0) {
-		m_bSleepTime = true;
-	}
 	if (this->m_dRestTimeHrs>0.0) {
 		if (dHrsToday>=m_dRestTimeHrs&&!m_bRestTimeMode) {//it is now time to rest
 			m_bRestTimeMode = true;
@@ -776,7 +829,14 @@ void FileCommands::CheckTime() {//check to see if it is time for a rest, time to
 			if (m_pLiDAR!=nullptr) {
 				m_pLiDAR->TurnOn(false);//turn off LiDAR to save a bit of power
 			}
-			return;
+		}
+	}
+	if (dHrsToday>m_dSleepTimeHrs&&m_dSleepTimeHrs>m_dMorningTimeHrs) {//sleep time before midnight
+		m_bSleepTime = true;
+	}
+	else if (m_dSleepTimeHrs<m_dMorningTimeHrs) {//sleep time must be after midnight
+		if (dHrsToday>m_dSleepTimeHrs&&dHrsToday<m_dMorningTimeHrs) {
+			m_bSleepTime = true;
 		}
 	}
 	if (m_bRestTimeMode) {
@@ -784,6 +844,7 @@ void FileCommands::CheckTime() {//check to see if it is time for a rest, time to
 			if (dHrsToday>=m_dMorningTimeHrs) {
 				//it is now morning time
 				m_bRestTimeMode = false;
+				m_bSleepTime = false;
 				if (m_pLiDAR!=nullptr) {
 					//make sure that LiDAR is turned on
 					m_pLiDAR->TurnOn(true);
@@ -807,4 +868,37 @@ double FileCommands::GetSleepTimeHrs() {
 		dSleepTimeHrs = m_dMorningTimeHrs - m_dSleepTimeHrs;
 	}
 	return dSleepTimeHrs;
+}
+
+
+/**
+ * @brief call this function shortly after program startup to insert a command to travel to a sunny location so that proper solar charging can occur	
+ * 
+ * @param dLowVoltage the low initial startup voltage of the battery. 
+ * @param pBatteryCharge pointer to a BatteryCharge object that will be updated after the command to travel to a sunny spot has been completed. After the BatteryCharge object has been updated, the software will enter a sleep state for a period of time so that it can charge more quickly.
+ */
+void FileCommands::TravelToSunnySpot(double dLowVoltage, BatteryCharge *pBatteryCharge) {
+	m_bTravelToSunnySpot = true;
+	m_dLowStartupVoltage = dLowStartupVoltage;
+	m_pBatteryCharge = pBatteryCharge;
+}
+
+bool FileCommands::GetClosestSafePoint(double dCurrentLatitude, double dCurrentLongitude, double &dSunnyLatitude, double &dSunnyLongitude) {
+	//find the closest safe point (if any) that was defined in the file command script
+	//optional safe points are defined with the "safepoint:" field, followed by a comma-separated latitude and longitude in degrees.
+	int nNumSafePoints = m_safeLat.size();
+	if (nNumSafePoints<=0) {
+		return false;//no safe points defined in the file command script
+	}
+	int nClosestIndex = 0;//index of closest safe point
+	double dClosestDist = Navigation::ComputeDistBetweenPts(dCurrentLatitude,dCurrentLongitude,m_safeLat[0],m_safeLong[0]);
+	for (int i=1;i<nNumSafePoints;i++) {
+		double dDist = Navigation::ComputeDistBetweenPts(dCurrentLatitude,dCurrentLongitude,m_safeLat[i],m_safeLong[i]);
+		if (dDist<dClosestDist) {
+			dClosestDist = dDist;
+			nClosestIndex = i;
+		}
+	}
+	dSunnyLatitude = m_safeLat[nClosestIndex];
+	dSunnyLongitude = m_safeLong[nClosestIndex];
 }

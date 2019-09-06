@@ -35,11 +35,11 @@ BatteryCharge::~BatteryCharge() {//destructor
  * @param dVoltage the battery voltage measurement being added to help determine if charge is getting low
  */
 void BatteryCharge::AddBattVoltageMeasurement(double dVoltage) {//add a battery voltage measurement (need to analyze battery voltage measurements over time to determine if charge is getting low)
-    if (dVoltage>=FULL_VOLTAGE_LEVEL) {
+    if (dVoltage>=FULL_VOLTAGE_LEVEL||dVoltage<OFF_VOLTAGE_LEVEL) {
         //reset count of low voltage values
         DeleteVoltageSamples();
     }
-    if (dVoltage<LOW_VOLTAGE_LEVEL) {
+    if (dVoltage<LOW_VOLTAGE_LEVEL&&dVoltage>OFF_VOLTAGE_LEVEL) {
         unsigned int uiCurrentTime = millis();
         if (uiCurrentTime<(WARMUP_TIME_MIN*60*1000)) {
             return;//do not consider any low voltage readings during the first WARMUP_TIME_MIN minutes of operation

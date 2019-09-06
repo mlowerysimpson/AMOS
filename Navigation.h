@@ -60,6 +60,8 @@ public:
 
 	IMU_DATASAMPLE m_imuData;//structure for holding compass, inertial data
 	//functions
+	static double ComputeDistBetweenPts(double dLatitudeDeg1, double dLongitudeDeg1, double dLatitudeDeg2, double dLongitudeDeg2);//use GPS locations of 2 points to get the distance between 2 points 
+	void SetDriveTimeoutSeconds(unsigned int uiTimeoutSec);//timeout on drive to location function after this many seconds
 	void AddObstacleAtCurrentHeading();//inform this Navigation object that there is an obstacle at the current heading
 	bool HaveValidGPS();//return true if we have obtained at least one sample of valid GPS data
 	double GetLatitude();//return the current latitude of the boat (as determined by GPS) in degrees
@@ -89,6 +91,7 @@ public:
 
 private:
 	//data
+	unsigned int m_uiDriveToLocationTimeout;//timeout in seconds for the DriveToLocation function (set to zero to disable timeouts)
 	int m_nNumObstacles;//the number of obstacles that have been found
 	float m_fObstacleHeadingOffset;//a temporary heading offset (in degrees) which is used to help avoiding obstacles
 	int m_nMaxPriority;//the maximum priority for a navigation instruction that is currently being executed, if a thread issues a navigation command with less priority than this, it will pause until the higher priority thread is finished and m_nMaxPriority becomes a lower value
@@ -125,7 +128,6 @@ private:
 	void TrimAirRudder(float &fAirRudderAngle,float fHeadingError,float fDesiredHeading,void *pShipLog);//fine-tune air rudder angle in order to correct any heading error
 	float TurnToRandomAngle(void *pThrusters, pthread_mutex_t *command_mutex, unsigned int *lastNetworkCommandTimeMS, void *pShipLog, bool *bCancel, int nPriority);//turns boat to a random angle
 	static double ComputeAvgHeading(double dHeading1Deg, double dHeading2Deg);//return average value of 2 headings in degrees
-	static double ComputeDistBetweenPts(double dLatitudeDeg1, double dLongitudeDeg1, double dLatitudeDeg2, double dLongitudeDeg2);//use GPS locations of 2 points to get the distance between 2 points 
 	void DriverAirboatForwardForTime(int nTotalTimeSeconds, float fMaxSpeed, float fHeadingDirection, void *pThrusters, pthread_mutex_t *command_mutex, 
 									 unsigned int *lastNetworkCommandTimeMS, void *pShipLog, bool *bCancel, bool bStopWhenDone, int nPriority);
 	double CalculateIntegratedHeadingError(double dTargetHeading, void *pShipLog);//get integral of heading error over the last COMPASS_BUFSIZE samples (~ 2 seconds)

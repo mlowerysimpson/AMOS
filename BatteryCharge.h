@@ -4,6 +4,7 @@
 
 #define FULL_VOLTAGE_LEVEL 13.0 //if battery voltage level is above this amount, then reset the count of low voltage samples
 #define LOW_VOLTAGE_LEVEL 12.0 //if battery voltage level is below this amount, then it is considered a "low" voltage, and is analyzed over time to determine if it is starting to drop too fast
+#define OFF_VOLTAGE_LEVEL 5.0 //if the battery voltage level is below this amount, then it can be assumed that the main power switch must be in the "off" position.
 #define WARMUP_TIME_MIN 5 //warmup time in minutes, during which low battery readings (if any) are not considered
 #define CHECK_WINDOW_MIN 15 //width of window in time (in minutes) during which low voltage readings (if any) are considered for monitoring the battery's charge level
 #define MIN_VOLT_LOSSRATE -1.0 //the minimum voltage loss rate allowed, in volts per hour (if voltage rate decreaese becomes less than this it is a sign that the battery is getting low and should be charged).

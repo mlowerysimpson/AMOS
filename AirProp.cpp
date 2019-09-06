@@ -20,6 +20,9 @@ void AirProp::Initialize() {//initializes propeller by sending a "stopped signal
 }
 
 void AirProp::SetSpeed(float fSpeed) {//set speed of propeller (fSpeed is in arbitrary units, must be between MIN_SPEED and MAXSPEED). 
+	//test
+	//printf("setting prop speed to %.2f\n",fSpeed);
+	//end test
 	if (m_bSafetyMode) {
 		Stop();
 		return;

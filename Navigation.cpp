@@ -25,6 +25,7 @@
 Navigation::Navigation(double dMagDeclination, pthread_mutex_t *i2c_mutex) {
 	m_currentGPSData=nullptr;
 	m_nMaxPriority = LOW_PRIORITY;
+	m_uiDriveToLocationTimeout = 0;
 	m_fObstacleHeadingOffset = 0;
 	m_i2c_mutex = i2c_mutex;
 	m_uiPreviousTrimTime=0;
@@ -691,11 +692,22 @@ char *Navigation::GetStatusLogText() {
 	dInitialHeading+=this->GetObstacleAvoidanceHeadingOffset((float)dInitialHeading);
 	TurnToCompassHeading((float)dInitialHeading, pThrusters, command_mutex, lastNetworkCommandTimeMS, pShipLog, bCancel, nPriority);//turn boat to desired heading
 	unsigned int uiStartTime = millis();
+	unsigned int uiTimeoutTime = uiStartTime + 1000*m_uiDriveToLocationTimeout;
+	bool bUseTimeout = false;
+	if (m_uiDriveToLocationTimeout>0) {
+		bUseTimeout = true;
+	}
+	
 	float fLSpeed=max(pThrust->GetLSpeed(),(float)2);//get the current speed of the left propeller 
 	float fRSpeed=max(pThrust->GetRSpeed(),(float)2);//get the current speed of the right propeller
 	float fAirSpeed = max(pThrust->GetAirSpeed(),(float)2);//get speed of air propeller (if used)
 	float fAirRudderAngle = 0;//the angle of the air rudder (if used)
 	while (dDistToDest>CLOSE_ENOUGH_M&&!*bCancel) {
+		if (bUseTimeout) {//check for timeout
+			if (millis() > uiTimeoutTime) {
+				break;
+			}
+		}
 		dMaxSpeed = m_dMaxSpeed;
 		/*if (dDistToDest<25) {//getting close to destination, make sure the boat is not going too fast
 			if (m_dMaxSpeed>(MAX_THRUSTER_SPEED/2)) {
@@ -736,6 +748,7 @@ char *Navigation::GetStatusLogText() {
 			ResetNavSamples();//reset the buffer that keeps track of historical gps locations & compass headings
 		}
 		double dDesiredHeading = ComputeHeadingAndDistToDestination(dLatitude,dLongitude,dDistToDest);//use current GPS location to get heading and distance to destination
+		dDesiredHeading+=this->GetObstacleAvoidanceHeadingOffset((float)dDesiredHeading);
 		float fHeadingError = GetHeadingError(dDesiredHeading, pShipLog);//use mix of current compass reading and historical compass and GPS data to determine the current heading error of the boat
 		if (fabs(fHeadingError)>MAX_ALLOWED_HEADING_ERROR&&((uiTimeNow - m_uiLastCompassCheckTime)>COMPASS_REORIENT_TIME)) {
 			float fDesiredCompassHeading = m_imuData.heading - fHeadingError;//note desired compass heading for the boat can in general differ from the desired GPS track due to wind and water currents
@@ -1650,4 +1663,13 @@ void Navigation::AddObstacleAtCurrentHeading() {//inform this Navigation object 
 		m_obstacles[m_nNumObstacles] = pNewObstacle;
 		m_nNumObstacles++;
 	}
+}
+
+/**
+ * @brief timeout on drive to location function after this many seconds
+ * 
+ * @param uiTimeoutSec timeout value for the DriveToLocation function (in seconds). Set to zero in order to disable timeouts for the DriveToLocation function.
+ */
+void Navigation::SetDriveTimeoutSeconds(unsigned int uiTimeoutSec) {
+	m_uiDriveToLocationTimeout = uiTimeoutSec;
 }

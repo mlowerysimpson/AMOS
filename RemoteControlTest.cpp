@@ -317,6 +317,11 @@ void EnterSleepMode(int nWaitTimeSec) {
 	}
 	prefsFile.closeDataFile();
 	//exits this program and puts AMOS into a low-power state in which only the RFU220SU is powered up
+	//test
+	char sMsg[256];
+	sprintf(sMsg,"About to enter sleep mode for %d minutes.\n",nWaitTimeSec/60);
+	g_shiplog.LogEntry(sMsg,true);
+	//end test
 	if (!g_shipdiagnostics->EnterSleepMode(nWaitTimeSec)) {
 		printf("Error trying to enter low power mode.\n");
 		return;
@@ -328,7 +333,7 @@ void EnterSleepMode(int nWaitTimeSec) {
 
 
 void *sensorCollectionFunction(void *pParam) {
-	const double BATT_VOLTAGE_CUTOFF = 6.0;//if the battery voltage is below this amount, then we can assume that the user must have switched off the +12V power supply
+	const double BATT_VOLTAGE_CUTOFF = 6.0;//if the battery voltage falls below this level, then we can assume that the user must have switched off the +12V power supply
 	const double FULL_POWER_VOLTAGE = 13.0;//if the battery voltage rises above this level, then we can assume that the battery has become fully charged and the boat is capable of full-speed operation
 	const double LOW_POWER_VOLTAGE = 11.33;//if the battery voltage falls below this level, then there is not much charge left, need to conserve power so shutoff power to thrusters and hope for sunlight!
 	unsigned int uiLastBattVoltageMeasurement = 0;//time in ms of last battery voltage measurement
@@ -402,17 +407,37 @@ void *sensorCollectionFunction(void *pParam) {
 
 				if (g_navigator&&!g_bVoltageSwitchedOff) {
 					if (!g_batteryCharge->isChargeOK()) {//charge levels are getting pretty low, need to shut down thrusters, send alarm notification, go into low power mode, and hope for sunshine
-						//turn off thrusters
-						g_navigator->SetPowerMode(LOW_POWER_MODE,dBattVoltage,&g_shiplog);
-						//send alarm notification that power levels are low
-						char szAlarmMsg[256];
-						sprintf(szAlarmMsg,"Low battery alarm! Voltage = %.2f V. Pos = %.6f, %.6f, Entering low power for one hour.\n",
-							dBattVoltage,g_navigator->GetLatitude(),g_navigator->GetLongitude());
-						char *szSubject = (char *)"Low Battery Alarm!";
-						g_notifier.IssueNotification(szAlarmMsg,szSubject,(void *)&g_shiplog);
+						bool bFileCommandSleep = false;
+						bool bTravelToSunnySpot = false;
+						//check to see if the file commands object is already set to make AMOS go into sleep mode
+						if (g_fileCommands!=nullptr) {
+							if (g_fileCommands->m_bSleepTime) {
+								bFileCommandSleep = true;
+							}
+							bTravelToSunnySpot = g_fileCommands->m_bTravelToSunnySpot;
+						}
+						if (!bTravelToSunnySpot) {//not trying to travel to a sunny spot for recharging
+							//turn off thrusters
+							g_navigator->SetPowerMode(LOW_POWER_MODE,dBattVoltage,&g_shiplog);
+						
+							if (!bFileCommandSleep) {
+								//send alarm notification that power levels are low
+								char szAlarmMsg[256];
+								char szSubject[256];
+								sprintf(szAlarmMsg,"Low battery alarm! Voltage = %.2f V. Pos = %.6f, %.6f, Entering low power for one hour.\n",
+									dBattVoltage,g_navigator->GetLatitude(),g_navigator->GetLongitude());
+								strcpy(szSubject,(char *)"Low Battery Alarm!");
+								g_notifier.IssueNotification(szAlarmMsg,szSubject,(void *)&g_shiplog);
 					
-						//enter low power mode for an hour
-						EnterSleepMode(3600);
+								if (bFileCommandSleep) {//sleep until morning time
+									EnterSleepMode(g_fileCommands->GetSleepTimeHrs()*3600);
+								}
+								else {
+									//enter low power mode for an hour
+									EnterSleepMode(3600);
+								}
+							}
+						}
 					}
 					else if (dBattVoltage>=FULL_POWER_VOLTAGE) {//charge levels are pretty full, can enable full-speed operation if not already in that mode
 						g_navigator->SetPowerMode(FULL_POWER_MODE,dBattVoltage,&g_shiplog);
@@ -926,12 +951,12 @@ int main(int argc, const char * argv[]) {
 			printf("Error trying to open or parse file: %s\n",commandFilename);
 			return 2;
 		}
+		if (bLowStartupVoltage) {
+			g_fileCommands->TravelToSunnySpot(dVoltage,g_batteryCharge);	
+		}
 		if (argc>=4) {
 			if (strcmp(argv[3],(char *)"continue")==0) {
 				g_fileCommands->ContinueFromPrevious();//continue at the last known stage of the file command (i.e. from previous program instance, useful for example in picking up where you left off if the program crashes for some mysterious reason)
-				/*if (bLowStartupVoltage) {
-					g_fileCommands->DriveToNearestSunnySpot(g_batteryCharge);
-				}*/
 			}
 		} 
 		//test
@@ -943,6 +968,7 @@ int main(int argc, const char * argv[]) {
 		g_commandLineParams.push_back((char *)argv[i]);
 	}
 
+	
 	if (Util::isSerPort(argv[1])) {
 		char *serPort = (char *)argv[1];
 		StartSerialClientThread(serPort);//start thread to read in commands over serial port connection
@@ -951,6 +977,7 @@ int main(int argc, const char * argv[]) {
 		char *remoteIPAddr = (char *)argv[1];
 		StartNetworkClientThread(remoteIPAddr);//start thread to open client that connects to the boat server
 	}
+	
 	printf("Type \"quit\" to exit...\n");
 	StartGPSThread();//start thread for receiving GPS data
 	//execute this loop until we get some accurate GPS data before doing anything else

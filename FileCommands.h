@@ -4,6 +4,7 @@
 #include <pthread.h>
 #include "RemoteCommand.h"
 #include "SensorDataFile.h"
+#include "BatteryCharge.h"
 #include "LIDARLite.h"
 
 class FileCommands {
@@ -12,6 +13,7 @@ public:
 	~FileCommands();//destructor
 	bool m_bFileOK;//true if the file could be successfully found, opened, and parsed
 	bool m_bSleepTime;//true if it is time to put AMOS into sleep mode
+	bool m_bTravelToSunnySpot;//flag may be set to true shortly after program startup, if it is necessary for the boat to first travel to the nearest sunny location for re-charging, prior to executing any of its required commands.
 	int m_nWaitTimeSeconds;//time in seconds that execution should be paused (if a FC_WAIT file command is received)
 	REMOTE_COMMAND *GetNextCommand();	
 	double GetSleepTimeHrs();//get length of time in hours that sleep will last
@@ -20,9 +22,11 @@ public:
 	static bool doesFileExist(char *szFilename);//return true if the file exists
 	void ContinueFromPrevious();//continue at the last known stage of the file command (i.e. from previous program instance, useful for example in picking up where you left off if the program crashes for some mysterious reason)
 	void IncrementAndSaveCommandIndex();//increment the file command index and save index to prefs.txt file
+	void TravelToSunnySpot(double dLowVoltage, BatteryCharge *pBatteryCharge);//call this function shortly after program startup to insert a command to travel to a sunny location so that proper solar charging can occur	
 
 private:
 	//functions
+	bool GetClosestSafePoint(double dCurrentLatitude, double dCurrentLongitude, double &dSunnyLatitude, double &dSunnyLongitude);//find the closest safe point (if any) that was defined in the file command script
 	void CheckTime();//check to see if it is time for a rest, time to go to sleep, or morning time.
 	int getMatchingLabelIndex(char *pLabelText);//find the index of a label that matches pLabelText
 	int DoCommand(REMOTE_COMMAND *pCommand, pthread_mutex_t *command_mutex, unsigned int *lastNetworkCommandTimeMS, void *pShipLog);//execute a particular file command
@@ -41,6 +45,8 @@ private:
 	bool readInFile();//read in and parse the text commands from the file (return true if successful)
 	void SaveCurrentCommand();//save the current command index to the preferences file (prefs.txt)
 
+	vector <double>m_safeLat;//safe point latitudes (in degrees) where solar re-charging is optimal
+	vector <double>m_safeLong;//safe point longitudes (in degrees) where solar re-charging is optimal
 	LIDARLite *m_pLiDAR;//object used for making LiDAR measurements (can be turned off to save a bit of power)
 	SensorDataFile *m_pSensorDataFile;//pointer to object used for storing sensor data to file
 	char *m_szRootFolder;//the folder where the prefs.txt (preferences) file is located 
@@ -48,7 +54,7 @@ private:
 	char *m_szFilename;//the name of the command file
 	vector <REMOTE_COMMAND *>m_commandList;
 	Navigation *m_pNavigator;//the navigation object used for getting GPS data, compass data, plotting courses, etc.
-	Thruster *m_pThrusters;//the 2 props that are used to propel the boat around
+	Thruster *m_pThrusters;//the prop(s) that are used to propel the boat around
 	int m_nCurrentCommandIndex;//the index of the command that is currently being executed
 	float m_fLastHeadingCommandAngle;//used for storing the most recently specified heading angle
 	bool m_bRestTimeMode;//true when AMOS is in "rest", mode, responsive, but not using its air propeller. It does not execute any file commands in this mode
@@ -56,6 +62,6 @@ private:
 	double m_dMorningTimeHrs;//designation of when morning time starts (in hours)
 	double m_dRestTimeHrs;//designation of when rest time starts (in hours)
 	double m_dSleepTimeHrs;//designation of when AMOS should be put to sleep (in hours)
-	int m_nNumSleepTimeChecks;//counter that gets incremented every time we check to see if it is time to go to sleep
-
+	double m_dLowStartupVoltage;//if the initial voltage of the boat on startup is low, this variable is used to store that low voltage
+	BatteryCharge *m_pBatteryCharge;//pointer to the BatteryCharge object for the boat. May be necessary to use for indicating that the boat should enter a sleep state for faster re-charging prior to executing more commands.
 };
