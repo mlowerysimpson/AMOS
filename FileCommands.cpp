@@ -29,8 +29,9 @@ FileCommands::FileCommands(char *szRootFolder, char *szFilename, Navigation *pNa
 	m_bTimeChecking = false;
 	m_bSleepTime = false;
 	m_bTravelToSunnySpot = false;
+	m_bTraveledToSunnySpot = false;
 	m_dMorningTimeHrs = 0.0;
-	m_dLowStartupVoltage = 0.0;
+	m_dLowVoltage = 0.0;
 	m_dRestTimeHrs = 0.0;
 	m_dSleepTimeHrs = 0.0;
 	m_szFilename=nullptr;
@@ -595,6 +596,9 @@ std::string FileCommands::trimEndOfText(std::string sText) {//get rid of carriag
  * @return 0 if no action is required by the calling function, otherwise return a non-zero code (see CommandList.h)
  */
 int FileCommands::DoNextCommand(pthread_mutex_t *command_mutex, unsigned int *lastNetworkCommandTimeMS, void *pShipLog) {
+	if (m_bTraveledToSunnySpot) {
+		return 0;//going to shut down soon, so don't start any new commands
+	}
 	if (m_bTravelToSunnySpot) {
 		//need to first travel to a sunny spot to get recharged before doing anything else
 		double dSunnyLatitude=0.0;//latitude of point where it is hoped there will be some sunshine for recharging
@@ -608,15 +612,17 @@ int FileCommands::DoNextCommand(pthread_mutex_t *command_mutex, unsigned int *la
 		if (GetClosestSafePoint(dCurrentLatitude,dCurrentLongitude,dSunnyLatitude,dSunnyLongitude)) {
 			ShipLog *pLog = (ShipLog *)pShipLog;
 			char sMsg[256];
-			sprintf(sMsg,"Startup voltage was only: %.2f V. Driving to %.6f, %.6f to look for more sun.",m_dLowStartupVoltage,dSunnyLatitude,dSunnyLongitude);
+			sprintf(sMsg,"Voltage was only: %.2f V. Driving to %.6f, %.6f to look for more sun.",m_dLowVoltage,dSunnyLatitude,dSunnyLongitude);
 			pLog->LogEntry(sMsg,true);
 			m_pNavigator->SetDriveTimeoutSeconds(300);//timeout on DriveToLocation function after 5 minutes in order to avoid straining battery too much
+			m_pNavigator->m_bExitNavFunction = false;
 			m_pNavigator->DriveToLocation(dSunnyLatitude,dSunnyLongitude,(void *)m_pThrusters,command_mutex,lastNetworkCommandTimeMS,pShipLog,1,m_bCancel,LOW_PRIORITY);
 			m_pNavigator->SetDriveTimeoutSeconds(0);//disable timeouts for DriveToLocation function
 		}
 		if (m_pBatteryCharge!=nullptr) {
 			m_pBatteryCharge->SetInsufficientStartupCharge();//indicate that boat should enter a sleep state for faster recharging. Hopefully it won't drift too much from the sunny location during that time.
 		}
+		m_bTraveledToSunnySpot = true;
 		m_bTravelToSunnySpot = false;
 		return 0;
 	}
@@ -627,12 +633,12 @@ int FileCommands::DoNextCommand(pthread_mutex_t *command_mutex, unsigned int *la
 		return 0;
 	}
 	int nRetval = 0;
-	//test
+	
 	if (m_bTravelToSunnySpot) {
 		usleep(1000000);//just pause in this thread, since there are no commands to execute at the moment, or the navigator object is not ready yet (ex: no compass data), or AMOS is in rest mode
 		return 0;
 	}
-	//end test
+	
 	if (m_commandList[m_nCurrentCommandIndex]) {
 		SaveCurrentCommand();//save the current command index to the preferences file (prefs.txt)
 		nRetval = DoCommand(m_commandList[m_nCurrentCommandIndex], command_mutex, lastNetworkCommandTimeMS, pShipLog);
@@ -734,9 +740,6 @@ int FileCommands::DoCommand(REMOTE_COMMAND *pCommand, pthread_mutex_t *command_m
 					//get actual current location
 					double dCurrentLatitude = m_pNavigator->GetLatitude();
 					double dCurrentLongitude = m_pNavigator->GetLongitude();
-					//test
-					printf("saving sample %d at %.6f, %.6f\n",k+1,dCurrentLatitude,dCurrentLongitude);
-					//end test
 					m_pSensorDataFile->SaveDataAtLocation(dCurrentLatitude, dCurrentLongitude);
 				}
 				s.Retract();
@@ -779,7 +782,7 @@ int FileCommands::getMatchingLabelIndex(char *pLabelText) {//find the index of a
 	return -1;//could not find matching label
 }
 
-void FileCommands::ContinueFromPrevious() {//continue at the last known stage of the file command (i.e. from previous program instance, useful for example in picking up where you left off if the program crashes for some mysterious reason)
+void FileCommands::ContinueFromPrevious() {//continue at the last known stage of the file command (i.e. from previous program instance, useful for example in picking up where you left off if AMOS goes into sleep mode for a while to charge up its battery).
 	char prefsFilename[PATH_MAX];			
 	sprintf(prefsFilename,(char *)"%s//prefs.txt",m_szRootFolder);
 	filedata prefsFile(prefsFilename);
@@ -874,13 +877,17 @@ double FileCommands::GetSleepTimeHrs() {
 /**
  * @brief call this function shortly after program startup to insert a command to travel to a sunny location so that proper solar charging can occur	
  * 
- * @param dLowVoltage the low initial startup voltage of the battery. 
+ * @param dLowVoltage the voltage of the battery that is deemed too low to travel much further. 
  * @param pBatteryCharge pointer to a BatteryCharge object that will be updated after the command to travel to a sunny spot has been completed. After the BatteryCharge object has been updated, the software will enter a sleep state for a period of time so that it can charge more quickly.
  */
 void FileCommands::TravelToSunnySpot(double dLowVoltage, BatteryCharge *pBatteryCharge) {
 	m_bTravelToSunnySpot = true;
-	m_dLowStartupVoltage = dLowStartupVoltage;
+	m_dLowVoltage = dLowVoltage;
 	m_pBatteryCharge = pBatteryCharge;
+	//exit out of current navigation function
+	if (m_pNavigator!=nullptr) {
+		m_pNavigator->m_bExitNavFunction = true;
+	}
 }
 
 bool FileCommands::GetClosestSafePoint(double dCurrentLatitude, double dCurrentLongitude, double &dSunnyLatitude, double &dSunnyLongitude) {
@@ -901,4 +908,92 @@ bool FileCommands::GetClosestSafePoint(double dCurrentLatitude, double dCurrentL
 	}
 	dSunnyLatitude = m_safeLat[nClosestIndex];
 	dSunnyLongitude = m_safeLong[nClosestIndex];
+}
+
+/**
+ * @brief check to see if a FileCommands object has one or more GPS waypoints associated with it (i.e. one or more "hold" or "waypoint" entries)
+ * 
+ * @param pFileCommands pointer to a FileCommands object
+ * @return true if pFileCommands has one or more GPS waypoints associated with it (i.e. with the "waypoint" or "hold" command)
+ * @return false if no GPS waypoints are associated with pFileCommands, or if pFileCommands is null
+ */
+bool FileCommands::HasGPSWaypoints(FileCommands *pFileCommands) {
+	if (pFileCommands==nullptr) {
+		return false;
+	}
+	int nNumCommands = pFileCommands->GetNumCommands();
+	for (int i=0;i<nNumCommands;i++) {
+		REMOTE_COMMAND *pRC = pFileCommands->GetCommand(i);
+		if (pRC!=nullptr) {
+			if (pRC->nCommand==FC_GPS_WAYPOINT||pRC->nCommand==FC_HOLD) {
+				return true;
+			}
+		}
+	}
+	return false;
+}
+
+/**
+ * @brief get the number of commands associated with this FileCommands object
+ * 
+ * @return int the number of commands associated with this FileCommands object
+ */
+int FileCommands::GetNumCommands() {
+	return m_commandList.size();
+}
+
+/**
+ * @brief get the command at index nCommandIndex	
+ * 
+ * @param nCommandIndex the index of the command to get
+ * @return REMOTE_COMMAND* object corresponding to the index specified, or null if no command exists for the specified index
+ */
+REMOTE_COMMAND * FileCommands::GetCommand(int nCommandIndex) {
+	if (nCommandIndex<0||nCommandIndex>=m_commandList.size()) {
+		return nullptr;
+	}
+	return m_commandList[nCommandIndex];
+}
+
+/**
+ * @brief necessary to do this in case AMOS drifted a long distance while sleeping. Should be called after ContinueFromPrevious function and after a GPS fix has been achieved, with valid latitude and longitude
+ * 
+ */
+void FileCommands::SetStepToClosestGPSWaypoint() {
+	const double DIST_TOLERANCE_M = 1.0;//consider two distances equivalent if they are within this distance (in m) to one another
+	if (m_pNavigator==nullptr) return;
+	if (FileCommands::HasGPSWaypoints(this)) {
+		//set current index to correspond to the closest gps location to our current position (necessary to do this in case AMOS has drifted a lot while sleeping)
+		double dCurrentLatitude = m_pNavigator->GetLatitude();
+		double dCurrentLongitude = m_pNavigator->GetLongitude();
+		int nClosestStepIndex = m_nCurrentCommandIndex;//the index of the step whose GPS coordinates are closest to our current position
+		double dMinDist = 999999999;//initialize to impossibly large value
+		int nNumSteps = this->GetNumCommands();
+		if (dCurrentLatitude!=0||dCurrentLongitude!=0) {
+			for (int i = 0;i<nNumSteps;i++) {
+				int j = (m_nCurrentCommandIndex + i)%nNumSteps;
+				if (m_commandList[j]->nCommand==FC_GPS_WAYPOINT||m_commandList[j]->nCommand==FC_HOLD) {
+					double dLatitude=0.0, dLongitude=0.0;
+					memcpy(&dLatitude,m_commandList[j]->pDataBytes,sizeof(double));
+					memcpy(&dLongitude,&m_commandList[j]->pDataBytes[8],sizeof(double));
+					
+					double dDist = Navigation::ComputeDistBetweenPts(dLatitude,dLongitude,dCurrentLatitude,dCurrentLongitude);
+					if (dDist<(dMinDist-DIST_TOLERANCE_M)) {
+						nClosestStepIndex = j;
+						dMinDist = dDist;
+					}
+					else if (dDist<(dMinDist+DIST_TOLERANCE_M)) {
+						//an equivalent distance was found, choose the one whose index is closest to m_nCurrentCommandIndex
+						int nDif1 = abs(nClosestStepIndex-m_nCurrentCommandIndex); 
+						int nDif2 = abs(j-m_nCurrentCommandIndex);
+						if (nDif2<nDif1) {
+							nClosestStepIndex = j;
+							dMinDist = dDist;
+						}
+					}
+				}
+			}
+			m_nCurrentCommandIndex = nClosestStepIndex;
+		}
+	}
 }

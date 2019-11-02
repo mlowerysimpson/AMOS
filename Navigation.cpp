@@ -4,6 +4,7 @@
 #include "Thruster.h"
 #include "ShipLog.h"
 #include "filedata.h"
+#include "Util.h"
 #include <math.h>
 #include <cstdlib>
 #include <ctime>
@@ -25,6 +26,7 @@
 Navigation::Navigation(double dMagDeclination, pthread_mutex_t *i2c_mutex) {
 	m_currentGPSData=nullptr;
 	m_nMaxPriority = LOW_PRIORITY;
+	m_bExitNavFunction = false;
 	m_uiDriveToLocationTimeout = 0;
 	m_fObstacleHeadingOffset = 0;
 	m_i2c_mutex = i2c_mutex;
@@ -337,10 +339,14 @@ double Navigation::ComputeHeadingDif(double dHeading1Deg,double dHeading2Deg) {/
  void Navigation::TurnToCompassHeading(float fHeading,void *pThrusters,pthread_mutex_t *command_mutex, unsigned int *lastNetworkCommandTimeMS, void *pShipLog, bool *bCancel, int nPriority) {//turn boat to desired heading
 	float MAX_TURN_SPEED = 5;
 	const int REVERSE_TIME_SEC = 30;//try turning in opposite direction after this many seconds (necessary sometimes when stuck on rocks, etc.)
+	const int TIMEOUT_TIME_SEC = 600;//length of time in seconds to allow for this function. If we're still in this function after this length of time then exit!
 	const float CLOSE_ENOUGH_DEG = 30;//try to get heading to match up within this amount
 	const int REVERSE_THRUST_TIME_SEC = 10;//length of time in seconds to try reversing turning direction (at maximum speed). Used when normal turning doesn't seem to be working, e.g. when stuck on rocks.
+
 	float fSpeedLeft=0, fSpeedRight=0;//left and right thruster speeds (start at slow speed)
 	char sMsg[256];
+	unsigned int uiFunctionStartTime = millis();
+	unsigned int uiTimeoutTime = uiFunctionStartTime + TIMEOUT_TIME_SEC*1000;
 	Thruster *pThrust = (Thruster *)pThrusters;
 	bool bAirBoat = false;
 	if (pThrust->isAirBoat()) {
@@ -372,12 +378,15 @@ double Navigation::ComputeHeadingDif(double dHeading1Deg,double dHeading2Deg) {/
 	while ((millis() - *lastNetworkCommandTimeMS)<10000&&!*bCancel) {
 		usleep(1000000);//delay executing thruster actions after recent network commands
 	}
-	while (m_imuData.sample_time_sec==0.0&&!*bCancel) {
+	while (m_imuData.sample_time_sec==0.0&&!*bCancel&&(millis()<uiTimeoutTime)) {
 		//wait for a valid sample of heading data
 		usleep(10000);
 	}
 	CheckPriority(nPriority);//check to see if there are no other higher priority threads trying to execute a navigation command at the same time
-	pthread_mutex_lock(command_mutex);
+
+	if (!Util::trylock(command_mutex,10000)) {
+		return;
+	}
 	pThrust->Stop();
 	pthread_mutex_unlock(command_mutex);
 	double dHeadingDif = ComputeHeadingDif(m_imuData.heading,(double)fHeading);
@@ -386,10 +395,17 @@ double Navigation::ComputeHeadingDif(double dHeading1Deg,double dHeading2Deg) {/
 	bool bReverse = false;//set to true when it is time to try reversing direction (after REVERSE_TIME_SEC)
 	while (fabs(dHeadingDif)>CLOSE_ENOUGH_DEG&&!*bCancel) {
 		unsigned int uiCurrentTime = millis();
+		if (uiCurrentTime>=uiTimeoutTime) {
+			break;//timeout
+		}
 		if ((uiCurrentTime - uiStartTime)>(REVERSE_TIME_SEC*1000)) {
 			bReverse = true;
 		}
 		if (dEstimatedTimeLeft<0) {//rotating in wrong direction
+			//test
+			strcpy(sMsg,(char *)"Increment turning speed.\n");
+			pLog->LogEntry(sMsg,true);
+			//end test
 			IncrementTurningSpeed(fSpeedLeft,fSpeedRight,MAX_TURN_SPEED,dHeadingDif>0);
 		}
 		else {//set speed of turn to be proportional to the expected amount of time remaining
@@ -411,10 +427,24 @@ double Navigation::ComputeHeadingDif(double dHeading1Deg,double dHeading2Deg) {/
 			}
 		}
 		while ((millis() - *lastNetworkCommandTimeMS)<10000&&!*bCancel) {
+			//test
+			strcpy(sMsg,(char *)"delay executing thruster actions after recent network commands.\n");
+			pLog->LogEntry(sMsg,true);
+			//end test
 			usleep(1000000);//delay executing thruster actions after recent network commands
 		}
 		CheckPriority(nPriority);//check to see if there are no other higher priority threads trying to execute a navigation command at the same time
-		pthread_mutex_lock(command_mutex);
+		//test
+		//strcpy(sMsg,(char *)"About to lock mutex.\n");
+		//pLog->LogEntry(sMsg,true);
+		//end test
+		if (!Util::trylock(command_mutex,10000)) {
+			return;
+		}
+		////test
+		//strcpy(sMsg,(char *)"Locked mutex.\n");
+		//pLog->LogEntry(sMsg,true);
+		//end test
 		if (bReverse) {
 			if (fSpeedLeft>fSpeedRight) {
 				fSpeedLeft = 0;
@@ -427,14 +457,26 @@ double Navigation::ComputeHeadingDif(double dHeading1Deg,double dHeading2Deg) {/
 		}
 		pThrust->SetLeftRightSpeed(fSpeedLeft, fSpeedRight);
 		pthread_mutex_unlock(command_mutex);
+		//test
+		//strcpy(sMsg,(char *)"Unlocked mutex.\n");
+		//pLog->LogEntry(sMsg,true);
+		//end test
 		usleep(100000);//loop every 100 ms
 		if (bReverse) {
 			unsigned int uiReverseStart = millis();
 			unsigned int uiReverseStop = uiReverseStart + 10000;//go in reverse direction for up to 10 seconds
+			//test
+			strcpy(sMsg,(char *)"Reversing.\n");
+			pLog->LogEntry(sMsg,true);
+			//end test
 			while (millis()<uiReverseStop&&fabs(dHeadingDif)>CLOSE_ENOUGH_DEG) {
 				usleep(100000);//0.1 second pause
 				dHeadingDif = ComputeHeadingDif(m_imuData.heading,(double)fHeading);
 			}
+			//test
+			strcpy(sMsg,(char *)"End reverse.\n");
+			pLog->LogEntry(sMsg,true);
+			//end test
 			bReverse = false;
 			uiStartTime = millis();
 		}
@@ -457,9 +499,10 @@ double Navigation::ComputeHeadingDif(double dHeading1Deg,double dHeading2Deg) {/
 	while ((millis() - *lastNetworkCommandTimeMS)<10000&&!*bCancel) {
 		usleep(1000000);//delay executing thruster actions after recent network commands
 	}
-	pthread_mutex_lock(command_mutex);
-	pThrust->Stop();//stop thrusters after desired heading is achieved
-	pthread_mutex_unlock(command_mutex);
+	if (Util::trylock(command_mutex,10000)) {
+		pThrust->Stop();//stop thrusters after desired heading is achieved
+		pthread_mutex_unlock(command_mutex);
+	}
 	m_uiLastCompassCheckTime=millis();
 	//test
 	printf("finished turn to compass heading\n");
@@ -641,7 +684,13 @@ char *Navigation::GetStatusLogText() {
  void Navigation::DriveToLocation(double dLatitude, double dLongitude, void *pThrusters, pthread_mutex_t *command_mutex, unsigned int *lastNetworkCommandTimeMS, void *pShipLog, int nInterpAmount, bool *bCancel, int nPriority) {
 	const float MAX_ALLOWED_HEADING_ERROR = 30;//need to do a full stop turn when the course of the GPS track deviates more than this from the desired track
 	const unsigned int COMPASS_REORIENT_TIME = 60000;//minimum number of ms to go without doing a full magnetic compass check 
+	const unsigned int CHECK_DIST_INTERVAL_MS = 240000;//time in ms to check to make sure that we are making progress toward the destination, if not getting closer, then exit this function and proceed to next destination (if any)
 	double dMaxSpeed = m_dMaxSpeed;//normally the maximum speed will be MAX_THRUSTER_SPEED, except when the boat gets close to its destination, or when battery charge is getting low, then the speed is reduced
+	double dOldDistToTarget = 0.0;//old distance to target
+	unsigned int uiOldDistTime = 0;//time of old distance to target measurement
+	if (m_bExitNavFunction) {
+		return;
+	}
 	if (dMaxSpeed<=0.0) {
 		//must be in low power mode, not enough power to drive anywhere
 		return;
@@ -653,16 +702,20 @@ char *Navigation::GetStatusLogText() {
 	pLog->LogEntry(sMsg,true);
 	//end test
 
-	while ((millis() - *lastNetworkCommandTimeMS)<10000&&!*bCancel) {
+	while ((millis() - *lastNetworkCommandTimeMS)<10000&&!*bCancel&&!m_bExitNavFunction) {
 		usleep(1000000);//delay start of driving procedure after recent network commands
 	}
-	while (!m_bGotValidGPSData&&!*bCancel) {//don't have valid GPS data yet...
+	while (!m_bGotValidGPSData&&!*bCancel&&!m_bExitNavFunction) {//don't have valid GPS data yet...
 		pLog->LogEntry((char *)"waiting for valid GPS data...\n",true);
 		usleep(1000000);
 	}
 	if (*bCancel==true) return;
+	if (m_bExitNavFunction) {
+		return;
+	}
 	
 	double dDistToDestination = Navigation::ComputeDistBetweenPts(dLatitude, dLongitude, m_dLatitude, m_dLongitude);//use GPS locations of 2 points to get the distance between 2 points 
+	
 	CheckPriority(nPriority);
 	if (nInterpAmount>1) {
 		ResetNavSamples();//reset the buffer that keeps track of historical gps locations & compass headings
@@ -689,6 +742,8 @@ char *Navigation::GetStatusLogText() {
 	double dDistToDest=0.0;
 	
 	double dInitialHeading = ComputeHeadingAndDistToDestination(dLatitude,dLongitude,dDistToDest);//use current GPS location to get initial heading and distance to destination
+	dOldDistToTarget = dDistToDest;
+	uiOldDistTime = millis();
 	dInitialHeading+=this->GetObstacleAvoidanceHeadingOffset((float)dInitialHeading);
 	TurnToCompassHeading((float)dInitialHeading, pThrusters, command_mutex, lastNetworkCommandTimeMS, pShipLog, bCancel, nPriority);//turn boat to desired heading
 	unsigned int uiStartTime = millis();
@@ -702,7 +757,7 @@ char *Navigation::GetStatusLogText() {
 	float fRSpeed=max(pThrust->GetRSpeed(),(float)2);//get the current speed of the right propeller
 	float fAirSpeed = max(pThrust->GetAirSpeed(),(float)2);//get speed of air propeller (if used)
 	float fAirRudderAngle = 0;//the angle of the air rudder (if used)
-	while (dDistToDest>CLOSE_ENOUGH_M&&!*bCancel) {
+	while (dDistToDest>CLOSE_ENOUGH_M&&!*bCancel&&!m_bExitNavFunction) {
 		if (bUseTimeout) {//check for timeout
 			if (millis() > uiTimeoutTime) {
 				break;
@@ -748,9 +803,22 @@ char *Navigation::GetStatusLogText() {
 			ResetNavSamples();//reset the buffer that keeps track of historical gps locations & compass headings
 		}
 		double dDesiredHeading = ComputeHeadingAndDistToDestination(dLatitude,dLongitude,dDistToDest);//use current GPS location to get heading and distance to destination
-		dDesiredHeading+=this->GetObstacleAvoidanceHeadingOffset((float)dDesiredHeading);
+		unsigned int uiCurrentTime = millis();
+		if ((uiCurrentTime - uiOldDistTime)>=CHECK_DIST_INTERVAL_MS) {
+			if (dDistToDest>dOldDistToTarget) {//getting further away from destination, after CHECK_DIST_INTERVAL_MS so exit this function. Probably going against a strong wind.
+				//test
+				sprintf(sMsg,"distance to target has increased from %.0f m to %.0f m\n",dOldDistToTarget,dDistToDest);
+				pLog->LogEntry(sMsg,true);
+				//end test
+				return;
+			}
+			uiOldDistTime = uiCurrentTime;
+			dOldDistToTarget = dDistToDest;
+		}
+		float fObstacleAvoidanceOffset = GetObstacleAvoidanceHeadingOffset((float)dDesiredHeading);
+		dDesiredHeading+=fObstacleAvoidanceOffset;
 		float fHeadingError = GetHeadingError(dDesiredHeading, pShipLog);//use mix of current compass reading and historical compass and GPS data to determine the current heading error of the boat
-		if (fabs(fHeadingError)>MAX_ALLOWED_HEADING_ERROR&&((uiTimeNow - m_uiLastCompassCheckTime)>COMPASS_REORIENT_TIME)) {
+		if (fObstacleAvoidanceOffset!=0||(fabs(fHeadingError)>MAX_ALLOWED_HEADING_ERROR&&((uiTimeNow - m_uiLastCompassCheckTime)>COMPASS_REORIENT_TIME))) {
 			float fDesiredCompassHeading = m_imuData.heading - fHeadingError;//note desired compass heading for the boat can in general differ from the desired GPS track due to wind and water currents
 			TurnToCompassHeading(fDesiredCompassHeading, pThrusters, command_mutex, lastNetworkCommandTimeMS, pShipLog, bCancel,nPriority);//turn boat to desired heading to correct GPS track
 			fLSpeed=2;
@@ -766,7 +834,7 @@ char *Navigation::GetStatusLogText() {
 				TrimSpeeds(fLSpeed,fRSpeed,fHeadingError,(float)dDesiredHeading,pShipLog);
 			}
 		}
-		while ((millis() - *lastNetworkCommandTimeMS)<10000&&!*bCancel) {
+		while ((millis() - *lastNetworkCommandTimeMS)<10000&&!*bCancel&&!m_bExitNavFunction) {
 			usleep(1000000);//delay executing thruster actions after recent network commands
 		}
 		CheckPriority(nPriority);
@@ -781,9 +849,20 @@ char *Navigation::GetStatusLogText() {
 		usleep(100000);//pause thread for 100 ms
 		dDesiredHeading = ComputeHeadingAndDistToDestination(dLatitude,dLongitude,dDistToDest);//use current GPS location to get heading and distance to destination
 		dDesiredHeading+= this->GetObstacleAvoidanceHeadingOffset((float)dDesiredHeading);//add on offset for avoiding obstacles (if any)
+		if ((uiCurrentTime - uiOldDistTime)>=CHECK_DIST_INTERVAL_MS) {
+			if (dDistToDest>dOldDistToTarget) {//getting further away from destination, after CHECK_DIST_INTERVAL_MS so exit this function. Probably going against a strong wind.
+				//test
+				sprintf(sMsg,"distance to target has increased from %.0f m to %.0f m\n",dOldDistToTarget,dDistToDest);
+				pLog->LogEntry(sMsg,true);
+				//end test
+				return;
+			}
+			uiOldDistTime = uiCurrentTime;
+			dOldDistToTarget = dDistToDest;
+		}
 	}
 	//must have gotten to destination (or within CLOSE_ENOUGH_M)
-	while ((millis() - *lastNetworkCommandTimeMS)<10000&&!*bCancel) {
+	while ((millis() - *lastNetworkCommandTimeMS)<10000&&!*bCancel&&!m_bExitNavFunction) {
 		usleep(1000000);//delay executing thruster actions after recent network commands
 	}
 	CheckPriority(nPriority);
@@ -939,11 +1018,11 @@ void Navigation::ExecuteRandomThrust(void *pThrusters, pthread_mutex_t *command_
 	float fLSpeed=(float)(-m_dMaxSpeed/2 + ((float)rand()) / RAND_MAX * 2 * m_dMaxSpeed);//assign random speed to left thruster
 	float fRSpeed=(float)(-m_dMaxSpeed/2 + ((float)rand()) / RAND_MAX * 2 * m_dMaxSpeed);//assign random speed to right thruster
 	Thruster *pThrust = (Thruster *)pThrusters;
-	pthread_mutex_lock(command_mutex);
 	//test
 	sprintf(sMsg,"random extraction: left speed = %.1f, right speed = %.1f\n",fLSpeed,fRSpeed);
 	pLog->LogEntry(sMsg,true);
 	//end test
+	pthread_mutex_lock(command_mutex);
 	pThrust->SetLeftRightSpeed(fLSpeed, fRSpeed);
 	pthread_mutex_unlock(command_mutex);
 	//allow the random thrust to occur for 10 seconds
@@ -982,6 +1061,10 @@ bool Navigation::isBoatStuck() {//return true if the nav buffer is full of sampl
 	}
 	double dLat = m_navSamples[0]->dLatitude;
 	double dLong = m_navSamples[0]->dLongitude;
+	if (dLat==0.0&&dLong==0.0) {
+		//don't have valid GPS yet
+		return false;
+	}
 	for (int i=1;i<SAMPLE_BUFSIZE;i++) {
 		if (fabs(m_navSamples[i]->dLatitude-dLat)>CLOSE_ENOUGH) {
 			return false;//different latitude, not stuck
@@ -1155,19 +1238,37 @@ double Navigation::AdjustUsingCompassCal(double dUnadjustedHeading) {//ajust the
 		dAdjustedHeading = dUnadjustedHeading + dOffset;
 	}
 	else {//need to interpolate between closest 2 calibration points
+		//test
+		//printf("dUnadjustedHeading = %.2f\n",dUnadjustedHeading);
+		//end test
 		int nLowerIndex = GetClosestHeadingCalIndexBelow(dUnadjustedHeading);
 		int nUpperIndex = GetClosestHeadingCalIndexAbove(dUnadjustedHeading);
+		//test
+		//printf("nLowerIndex = %d, nUpperIndex = %d\n",nLowerIndex,nUpperIndex);
+		//end test
 		double dReported1 = m_compassAdjustment->reported_compass_vals[nLowerIndex];
 		double dReported2 = m_compassAdjustment->reported_compass_vals[nUpperIndex];
+		//test
+		//printf("dReported1 = %.2f, dReported2 = %.2f\n",dReported1,dReported2);
+		//end test
 		double dReportedRange = ComputeHeadingDif(dReported1, dReported2);
 		double dActual1 = m_compassAdjustment->actual_compass_vals[nLowerIndex];
 		double dActual2 = m_compassAdjustment->actual_compass_vals[nUpperIndex];
+		//test
+		//printf("dActual1 = %.2f, dActual2 = %.2f\n",dActual1,dActual2);
+		//end test 
 		double dActualRange = ComputeHeadingDif(dActual1, dActual2);
 		double dCalFactor = ComputeHeadingDif(dReported1, dUnadjustedHeading) / dReportedRange;//amount (relative to 1.0 that input angle is within the particular calibration region)
 		double dOffset1 = ComputeHeadingDif(dReported1, dActual1);
 		double dOffset2 = ComputeHeadingDif(dReported2, dActual2);
+		//test
+		//printf("dOffset1 = %.2f, dOffset2 = %.2f\n",dOffset1,dOffset2);
+		//end test
 		double dOffset = dCalFactor * dOffset2 + (1.0 - dCalFactor) * dOffset1;
 		dAdjustedHeading = dUnadjustedHeading + dOffset;
+		//test
+		//printf("dAdjustedHeading = %.2f\n",dAdjustedHeading);
+		//end test
 	}
 	//make sure that adjusted heading is within 0 to 360 range
 	if (dAdjustedHeading<0) {
@@ -1380,6 +1481,8 @@ double Navigation::GetLongitude() {
  */
 void Navigation::DriverAirboatForwardForTime(int nTotalTimeSeconds, float fMaxSpeed, float fHeadingDirection, void *pThrusters, pthread_mutex_t *command_mutex, 
 									 unsigned int *lastNetworkCommandTimeMS, void *pShipLog, bool *bCancel, bool bStopWhenDone, int nPriority) {
+	const float MAX_ALLOWED_HEADING_ERROR = 30.0;
+	const unsigned int COMPASS_REORIENT_TIME = 60000;//minimum number of ms to go without doing a full magnetic compass check 
 	Thruster *pThrust = (Thruster *)pThrusters;
 	ShipLog *pLog = (ShipLog *)pShipLog;
 	unsigned int ui_startTime = millis();
@@ -1418,7 +1521,17 @@ void Navigation::DriverAirboatForwardForTime(int nTotalTimeSeconds, float fMaxSp
 			float fObstacleOffset=this->GetObstacleAvoidanceHeadingOffset(fHeadingDirection);//add on angular offset for avoiding obstacles (if any)
 			float fHeadingError = m_imuData.heading - (fHeadingDirection+fObstacleOffset);
 
-			TrimAirRudder(fAirRudderAngle,fHeadingError,fHeadingDirection+fObstacleOffset,pShipLog);	
+
+			unsigned int uiTimeNow = millis();
+			if (fabs(fHeadingError)>MAX_ALLOWED_HEADING_ERROR&&((uiTimeNow - m_uiLastCompassCheckTime)>COMPASS_REORIENT_TIME)) {
+				float fDesiredCompassHeading = m_imuData.heading - fHeadingError;//note desired compass heading for the boat can in general differ from the desired GPS track due to wind and water currents
+				TurnToCompassHeading(fDesiredCompassHeading, pThrusters, command_mutex, lastNetworkCommandTimeMS, pShipLog, bCancel,nPriority);//turn boat to desired heading to correct GPS track
+				fAirSpeed=2;
+			}
+			else {//heading is close enough so that just a minor trimming of direction can be used
+				CheckPriority(nPriority);
+				TrimAirRudder(fAirRudderAngle,fHeadingError,fHeadingDirection+fObstacleOffset,pShipLog);	
+			}
 			if (lastNetworkCommandTimeMS!=nullptr) {
 				while ((millis() - *lastNetworkCommandTimeMS)<10000&&!*bCancel) {
 					usleep(1000000);//delay executing thruster actions after recent network commands
@@ -1457,11 +1570,11 @@ float Navigation::TurnToRandomAngle(void *pThrusters, pthread_mutex_t *command_m
 	ShipLog *pLog = (ShipLog *)pShipLog;
 	float fRandomAngle=(float)(360*((float)rand()) / RAND_MAX);//get a random angle between 0 and 360
 	Thruster *pThrust = (Thruster *)pThrusters;
-	pthread_mutex_lock(command_mutex);
 	//test
 	sprintf(sMsg,"setting random heading angle: %.1f deg\n",fRandomAngle);
 	pLog->LogEntry(sMsg,true);
 	//end test
+	pthread_mutex_lock(command_mutex);
 	this->TurnToCompassHeading(fRandomAngle,pThrusters, command_mutex, lastNetworkCommandTimeMS, pShipLog, bCancel, nPriority);
 	pthread_mutex_unlock(command_mutex);
 }
@@ -1641,9 +1754,11 @@ float Navigation::GetObstacleAvoidanceHeadingOffset(float fDesiredHeading) {//ge
 
 /**
  * @brief Inform this Navigation object that there is an obstacle at the current heading
+ * @param pShipLog void pointer to a ShipLog object used for saving diagnostic data.
  * 
  */
-void Navigation::AddObstacleAtCurrentHeading() {//inform this Navigation object that there is an obstacle at the current heading
+void Navigation::AddObstacleAtCurrentHeading(void *pShipLog) {//inform this Navigation object that there is an obstacle at the current heading
+	ShipLog *pLog = (ShipLog *)pShipLog;
 	int nCurrentHeading = (int)(m_imuData.heading+.5);//get current heading expressed as integer
 	//check to see if obstacle was added already, and if so update its associated time
 	unsigned int uiCurrentTime = millis();
@@ -1662,6 +1777,9 @@ void Navigation::AddObstacleAtCurrentHeading() {//inform this Navigation object 
 		pNewObstacle->uiFoundTime = uiCurrentTime;
 		m_obstacles[m_nNumObstacles] = pNewObstacle;
 		m_nNumObstacles++;
+		char szMsg[256];
+		sprintf(szMsg,"Obstacle at heading of %d deg, %d obstacles total.\n",pNewObstacle->nHeading,m_nNumObstacles);
+		pLog->LogEntry(szMsg,true);
 	}
 }
 

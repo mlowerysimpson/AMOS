@@ -15,14 +15,19 @@ public:
 	bool m_bSleepTime;//true if it is time to put AMOS into sleep mode
 	bool m_bTravelToSunnySpot;//flag may be set to true shortly after program startup, if it is necessary for the boat to first travel to the nearest sunny location for re-charging, prior to executing any of its required commands.
 	int m_nWaitTimeSeconds;//time in seconds that execution should be paused (if a FC_WAIT file command is received)
-	REMOTE_COMMAND *GetNextCommand();	
+	bool m_bTraveledToSunnySpot;//flag that is set to true after the boat has traveled to a sunny or safe spot (or after the command to drive to the sunny or safe spot has timed out).
+	REMOTE_COMMAND *GetNextCommand();
+	REMOTE_COMMAND *GetCommand(int nCommandIndex);//get the command at index nCommandIndex	
 	double GetSleepTimeHrs();//get length of time in hours that sleep will last
 	void PrintOutCommandList();//test function for printing out list of commands
 	int DoNextCommand(pthread_mutex_t *command_mutex, unsigned int *lastNetworkCommandTimeMS, void *pShipLog);//execute the next command in the list of file commands
 	static bool doesFileExist(char *szFilename);//return true if the file exists
-	void ContinueFromPrevious();//continue at the last known stage of the file command (i.e. from previous program instance, useful for example in picking up where you left off if the program crashes for some mysterious reason)
+	static bool HasGPSWaypoints(FileCommands *pFileCommands);//return true if the pFileCommands object has one or more GPS waypoints associated with it (i.e. one or more "hold" or "waypoint" entries)
+	void ContinueFromPrevious();//continue at the last known stage of the file command sequence (i.e. from previous program instance, useful for example in picking up where you left off if AMOS goes into sleep mode for a while to charge up its battery)
+	void SetStepToClosestGPSWaypoint();//necessary to do this in case AMOS drifted a long distance while sleeping
 	void IncrementAndSaveCommandIndex();//increment the file command index and save index to prefs.txt file
 	void TravelToSunnySpot(double dLowVoltage, BatteryCharge *pBatteryCharge);//call this function shortly after program startup to insert a command to travel to a sunny location so that proper solar charging can occur	
+	int GetNumCommands();//return the number of commands associated with this FileCommands object
 
 private:
 	//functions
@@ -62,6 +67,6 @@ private:
 	double m_dMorningTimeHrs;//designation of when morning time starts (in hours)
 	double m_dRestTimeHrs;//designation of when rest time starts (in hours)
 	double m_dSleepTimeHrs;//designation of when AMOS should be put to sleep (in hours)
-	double m_dLowStartupVoltage;//if the initial voltage of the boat on startup is low, this variable is used to store that low voltage
+	double m_dLowVoltage;//the voltage of the boat that is deemed too low to travel much further
 	BatteryCharge *m_pBatteryCharge;//pointer to the BatteryCharge object for the boat. May be necessary to use for indicating that the boat should enter a sleep state for faster re-charging prior to executing more commands.
 };

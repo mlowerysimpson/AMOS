@@ -28,7 +28,7 @@ void *PictureLoggingThread(void *pParam) {//function continuously logging pictur
 
 Vision::Vision() {//constructor
 	m_bCameraOpened=false;
-	m_cap.set(CV_CAP_PROP_BUFFERSIZE, 10); // internal buffer will now store only 10 frames (may help to reduce lag from storage of video frames in buffer)
+	m_cap.set(CAP_PROP_BUFFERSIZE, 10); // internal buffer will now store only 10 frames (may help to reduce lag from storage of video frames in buffer)
 	m_cap.open(0);//use first camera on Pi for video capture
 	if (m_cap.isOpened() == false)  
 	{
@@ -75,6 +75,7 @@ Vision::~Vision() {//destructor
 //szOverlayText = text to overlay on the image, set to NULL if no text should be overlayed
 bool Vision::CaptureFrame(int nThresholdInfo, char *szCapFilename, char *overlayText/*=NULL*/) {
 	//check to make sure that camera was opened
+	const int FRAMES_TO_CAPTURE = 10;//number of frames to capture before using an image (it can be necessary to set this contant to > 1 in bright sunlight or low lighting to allow the automatic brightness algorithm to adjust itself)
 	if (!m_bCameraOpened) return false;
 	bool bCannyEdgeDetection = true;
 	bool  bFastFeatureDetection = false;
@@ -98,7 +99,11 @@ bool Vision::CaptureFrame(int nThresholdInfo, char *szCapFilename, char *overlay
 	
 	vector<KeyPoint> keypoints;
 
-	bool bSuccess = m_cap.read(img1); //read a new frame from video camera 
+	bool bSuccess = false;
+	for (int i=0;i<FRAMES_TO_CAPTURE;i++) {
+		bSuccess = m_cap.read(img1); //read a new frame from video camera 
+		if (!bSuccess) break;
+	}
 	if (bSuccess == false) {
 		cout << "Video camera is disconnected" << endl;
 		return false;
@@ -135,7 +140,7 @@ bool Vision::CaptureFrame(int nThresholdInfo, char *szCapFilename, char *overlay
 	bool bRetval = false;
 	if (bLowQualityImage) {
 		vector <int>quality_params;
-		quality_params.push_back(CV_IMWRITE_JPEG_QUALITY);
+		quality_params.push_back(IMWRITE_JPEG_QUALITY);
 		quality_params.push_back(20);
 		bRetval = imwrite(sOutputFilename,img1_out,quality_params);
 	}

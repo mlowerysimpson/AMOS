@@ -3,7 +3,7 @@
 #pragma once
 
 #define FULL_VOLTAGE_LEVEL 13.0 //if battery voltage level is above this amount, then reset the count of low voltage samples
-#define LOW_VOLTAGE_LEVEL 12.0 //if battery voltage level is below this amount, then it is considered a "low" voltage, and is analyzed over time to determine if it is starting to drop too fast
+#define LOW_VOLTAGE_LEVEL 11.8 //if battery voltage level is below this amount, then it is considered a "low" voltage, and is analyzed over time to determine if it is starting to drop too fast
 #define OFF_VOLTAGE_LEVEL 5.0 //if the battery voltage level is below this amount, then it can be assumed that the main power switch must be in the "off" position.
 #define WARMUP_TIME_MIN 5 //warmup time in minutes, during which low battery readings (if any) are not considered
 #define CHECK_WINDOW_MIN 15 //width of window in time (in minutes) during which low voltage readings (if any) are considered for monitoring the battery's charge level
@@ -20,7 +20,7 @@
 #include <vector>
 #include "ShipLog.h"
 
-#define MIN_STARTUP_VOLTAGE 12.4 //minimum voltage required for starting up program
+#define MIN_STARTUP_VOLTAGE 11.5 //minimum voltage required for starting up program
 
 using namespace std;
 
@@ -39,6 +39,7 @@ public:
     bool hasEnoughChargeToStart(double dVoltage);//return true if dVoltage >= MIN_STARTUP_VOLTAGE
     double GetMinStartupVoltage();//return the minimum voltage required for startup
     void SetInsufficientStartupCharge();//call this function on startup if the battery charge isn't really high enough to last very long (i.e. if voltage < MIN_STARTUP_VOLTAGE)
+    void IgnoreInsufficentStartupCharge();//call this function to override a previous call to SetInsufficientStartupCharge();
 
 private:
     vector <LOW_VOLTAGE_SAMPLE *>m_lowVoltageSamples;

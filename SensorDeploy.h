@@ -2,7 +2,7 @@
 #define MIN_SD_PULSE_TIME 800 //mininum pulse time in microseconds, corresponds to the fully deployed state of the sensor deployment arm (i.e. sensors should be in the water)
 #define MAX_SD_PULSE_TIME 2300 //maximum pulse time in microseconds, corresponds to the fully retracted state of the sensor deployment arm (i.e. sensors should be retracted out of the water onto the boat deck)
 #define SD_PULSE_INTERVAL 10000 //interval in microseconds between pulses
-#define DEPLOYMENT_PULSE_PIN 35 //pin used for sending pulses to the servo motor that is used for deploying / retracting sensors
+#define DEPLOYMENT_PULSE_PIN 21 //pin used for sending pulses to the servo motor that is used for deploying / retracting sensors
 
 class SensorDeploy {
 public:

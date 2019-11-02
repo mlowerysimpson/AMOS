@@ -88,6 +88,7 @@ private:
 
 	time_t GetNextLogTime(int nLoggingIntervalSec);//get the time of the next sample (in seconds since midnight, Jan, 1, 1970)
 	void WriteDataFileHeader();
-	bool CreateDataFile();//open data file for appending data or create data file if it doesn't exist already
+	bool OpenDataFileForAppending();//open data file for appending data or create data file if it doesn't exist already
+	void CloseDataFile();//close the data file (if it is currently open)
 	char * GetFormattedData(struct tm *sampleTime);//formats the currently available data
 };

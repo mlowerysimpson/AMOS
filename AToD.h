@@ -1,6 +1,8 @@
-//AToD.h class for getting A to D meausurements from the MCP3428 A to D converter chip (using I2C on Raspberry Pi)
+//AToD.h class for getting A to D meausurements from the ADS1115 A to D converter chip (using I2C on Raspberry Pi)
 //uses this A to D board: https://shop.controleverything.com/products/4-channel-0-20v-analog-to-digital-converter
 #include "ShipLog.h"
+#include "BatteryCharge.h"
+
 #ifndef _WIN32
 #include <pthread.h>
 #else
@@ -22,7 +24,7 @@ public:
 	~AToD();//destructor
 
 	bool GetMeasurement(int nChannel, int nPGAGain, double dMeasurementGain, double &dResult);//get a measurement from a particular A to D 
-	bool GetBatteryVoltage(double &dBattVoltage);//gets the battery voltage for AMOS, assumes various resistor divider and channel settings for the A to D measurement
+	bool GetBatteryVoltage(double &dBattVoltage, BatteryCharge *pBattCharge);//gets the battery voltage for AMOS, assumes various resistor divider and channel settings for the A to D measurement
 	bool SendBatteryVoltage(int nHandle, bool bUseSerial);//send most recent battery voltage out network socket or serial port (if no battery voltage available yet, then do an A to D conversion to get it)
 
 private:

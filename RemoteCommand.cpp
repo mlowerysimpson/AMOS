@@ -13,7 +13,7 @@ void *driveForwardThread(void *pParam) {//function drives boat forward at its cu
 	pRC->m_bDrivingThreadRunning = true;
     while (!pRC->m_bStopDriving) {//keep moving forward in direction pRC->m_fMoveForwardDirection and at speed pRC->m_fMoveForwardSpeed
 		pRC->m_pNav->DriveForwardForTime(1,pRC->m_fMoveForwardSpeed,pRC->m_fMoveForwardDirection,
-			(void *)pRC->m_thrusters,nullptr, nullptr, nullptr,&pRC->m_bStopDriving,false); 
+			(void *)pRC->m_thrusters,nullptr, nullptr, nullptr,&pRC->m_bStopDriving,false,LOW_PRIORITY); 
 	}
 	pRC->m_bDrivingThreadRunning=false;
     return 0;
@@ -23,7 +23,7 @@ void *driveToLocationThread(void *pParam) {//function drives boat to a particula
 	RemoteCommand *pRC = (RemoteCommand *)pParam;
 	pRC->m_bStopDriving = false;
 	pRC->m_bDrivingThreadRunning = true;
-	pRC->m_pNav->DriveToLocation(pRC->m_latitudeDest,pRC->m_longitudeDest,(void *)pRC->m_thrusters,pRC->m_command_mutex,&pRC->m_lastNavigationmmandTimeMS, pRC->m_shipLog, 10,&pRC->m_bStopDriving);
+	pRC->m_pNav->DriveToLocation(pRC->m_latitudeDest,pRC->m_longitudeDest,(void *)pRC->m_thrusters,pRC->m_command_mutex,&pRC->m_lastNavigationmmandTimeMS, pRC->m_shipLog, 10,&pRC->m_bStopDriving,HIGH_PRIORITY);//higher priority since command was explicity issued by user using app
 	pRC->m_bDrivingThreadRunning = false;
 	return 0;
 }

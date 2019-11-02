@@ -108,7 +108,7 @@ double BatteryCharge::CalculateLowVoltRegression(vector <LOW_VOLTAGE_SAMPLE *>sa
     vector <double>voltage;//voltage of each sample
     int nNumSamples = samples.size();
     for (int i=0;i<nNumSamples;i++) {
-        double dTimeHrs = samples[i]->timeMS / 1000.0 / 60.0;
+        double dTimeHrs = samples[i]->timeMS / 1000.0 / 3600.0;
         time_hrs.push_back(dTimeHrs);
         voltage.push_back(samples[i]->dVoltage);
     }
@@ -168,4 +168,13 @@ double BatteryCharge::GetMinStartupVoltage() {
  */
 void BatteryCharge::SetInsufficientStartupCharge() {
     m_bInsufficientStartupVoltage = true;
+}
+
+
+/**
+ * @brief call this function to override a previous call to SetInsufficientStartupCharge();
+ * 
+ */
+void BatteryCharge::IgnoreInsufficentStartupCharge() {
+    m_bInsufficientStartupVoltage = false;
 }

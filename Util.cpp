@@ -1,6 +1,9 @@
 #include "Util.h"
 #include <stdio.h>
 #include <string.h>
+#include <wiringPi.h>
+#include <unistd.h>
+#include <stdlib.h>
 
 Util::Util() {
 
@@ -64,17 +67,15 @@ bool Util::ContainsHelpFlag(int argc, const char * argv[]) {//returns true if an
 }
 
 /**
- * @brief return true if szDevice corresponds to a serial port on this computer, i.e. is of the form /dev/serial# where # is some number >=0
+ * @brief return true if szDevice corresponds to a serial port on this computer, i.e. is of the form /dev/... 
  * 
  * @param szDevice the text to check to see if it corresponds to a serial port on this device, i.e. is of the form: /dev/serial# where # is some number >=0
  */
-bool Util::isSerPort(const char *szDevice) {//
+bool Util::isSerPort(const char *szDevice) {
 	int nPortNumber=0;
 	if (szDevice==nullptr) return false;
-	if (sscanf(szDevice,"/dev/serial%d",&nPortNumber)>0) {
-		if (nPortNumber>=0) {
-			return true;
-		}
+	if (strstr(szDevice,(char *)"/dev")) {
+		return true;
 	}
 	return false;
 }
@@ -102,4 +103,61 @@ time_t Util::GetNextIntervalTime(int nLoggingIntervalSec) {
 	
 	time_t sampleTime = nTimeDif + rawtime;
 	return sampleTime;
+}
+
+/**
+ * @brief calculate the linear regression through a bunch of points
+ * 
+ * @param x a vector of the x-axis coordinates for the points for which the linear regression will be returned.
+ * @param y a vector of the y-axis coordinates for the points for which the linear regression will be returned.
+ * @return double the slope through the set of x, y points
+ */
+double Util::slope(const std::vector<double>& x, const std::vector<double>& y) {
+	if(x.size() != y.size()){
+        return 0.0;
+    }
+	else if (x.size()==0) {
+		return 0.0;
+	}
+    double n = x.size();
+	double sumX = 0.0;
+	double sumY = 0.0;
+	for (int i=0;i<n;i++) {
+		sumX+=x[i];
+		sumY+=y[i];
+	}
+    double avgX = sumX / n;
+    double avgY = sumY / n;
+
+    double numerator = 0.0;
+    double denominator = 0.0;
+
+    for(int i=0; i<n; ++i){
+        numerator += (x[i] - avgX) * (y[i] - avgY);
+        denominator += (x[i] - avgX) * (x[i] - avgX);
+    }
+
+    if(denominator == 0){
+        return 0.0;
+    }
+    return numerator / denominator;
+}
+
+/**
+ * @brief tries for uiTimeoutMS milliseconds to lock a mutex, if it can't do it during that time, return false
+ * 
+ * @param mut pointer to the mutex we are trying to lock
+ * @param uiTimeoutMS a timeout value in milliseconds, after which it is time to give up trying to lock the mutex
+ * @return true if the mutex was successfully locked
+ * @return false if the mutex could not be locked during the specified time period
+ */
+bool Util::trylock(pthread_mutex_t *mut, unsigned int uiTimeoutMS) {
+	unsigned int uiTimeoutTime = millis() + uiTimeoutMS;
+	while (millis()<uiTimeoutTime) {
+		if (pthread_mutex_trylock(mut)==0) {
+			return true;
+		}
+		usleep(1000);
+	}
+	return false;
 }

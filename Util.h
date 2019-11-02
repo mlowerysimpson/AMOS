@@ -5,6 +5,8 @@
 #include <termios.h>
 #include <stropts.h>
 #include <ctime>
+#include <vector>
+#include <pthread.h>
 
 using namespace std;
 
@@ -24,6 +26,8 @@ public:
 	//printf("nLoggingIntervalSec = %d\n",nLoggingIntervalSec);
 	//end test
 	static time_t GetNextIntervalTime(int nLoggingIntervalSec);//get next time, assuming that the day is subdivided into intervals of length nLoggingIntervalSec seconds
+    static double slope(const std::vector<double>& x, const std::vector<double>& y);//calculate the linear regression through a bunch of points
+    static bool trylock(pthread_mutex_t *mut, unsigned int uiTimeoutMS);//tries for uiTimeoutMS milliseconds to lock a mutex, if it can't do it during that time, return false
 private:
     static int _kbhit();
 };

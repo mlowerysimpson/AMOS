@@ -6,7 +6,7 @@
 
 #define DEFAULT_DIAG_PORT "/dev/serial0" //the default serial port interface to use for getting diagnostics data and control functions
 #define MIN_SLEEPTIME_SEC 120 //minimum time that AMOS can be powered down by a "sleep" command
-#define ACTIVITY_PIN 31 //pin used for outputting activity pulses to indicate that something is happening
+#define ACTIVITY_PIN 7 //pin used for outputting activity pulses to indicate that something is happening
 
 /**
  * @brief diagnostics interface for ship monitoring, power control, etc.

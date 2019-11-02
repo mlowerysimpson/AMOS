@@ -13,7 +13,7 @@
 #include <vector>
 #include "Sensor.h"
 
-#define LEAK_PIN 5
+#define LEAK_PIN 16
 
 using namespace std;
 

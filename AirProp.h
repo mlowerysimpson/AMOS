@@ -8,7 +8,7 @@
 #define AIR_PWM_CLK_DIV 64 //divisor to use for 19.2 MHz PWM clock
 #define AIR_PWM_CLK_FREQ 19200000 //19.2 MHz PWM clock frequency
 #define AIR_TIME_INCREMENT_US 3.33 //timing for data portion of clock pulses has this resolution in microseconds
-#define AIR_PROP_PWM_PIN 41  //gpio pin to use for PWM for propeller (requires Alt0 alternative pin function)
+#define AIR_PROP_PWM_PIN 12  //gpio pin to use for PWM for propeller (requires Alt0 alternative pin function)
 
 //parameters for avoiding resonance speeds
 //#define AVOID_RESONANCE 1 //need to define the following 3 lines with suitable values for setups (eg. damaged propeller) that can resonate at certain speeds

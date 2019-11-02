@@ -21,8 +21,8 @@
 #define BATTERYBOX 1
 
 //GPIO pins used to connect to humidity sensors
-#define HUMIDITY_CPUBOX_PIN 7//GPIO pin used for one-wire interface to humidity sensor in CPU box
-#define HUMIDITY_BATTERYBOX_PIN 8 //GPIO pin used for one-wire interface to humidity sensor in battery box
+#define HUMIDITY_CPUBOX_PIN 6//GPIO pin used for one-wire interface to humidity sensor in CPU box
+#define HUMIDITY_BATTERYBOX_PIN 20 //GPIO pin used for one-wire interface to humidity sensor in battery box
 
 #define HUMIDITY_SAMPLE_INTERVAL_SEC 5 //the interval (in seconds) between samples of the humidity sensor
 

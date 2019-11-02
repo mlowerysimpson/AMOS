@@ -148,6 +148,10 @@ void *serportFunction(void *pParam) {//function receives commands from base stat
 			{
 				g_lastNetworkCommandTime = millis();
 			}
+			//test
+			sprintf(sMsg,"Serial Command Received: %d\n",pCommandReceived->nCommand);
+			g_shiplog.LogEntry(sMsg,true);
+			//end test
 			pthread_mutex_lock(&g_remoteCommandsMutex);
 			g_remoteCommands.push_back(pCommandReceived);
 			pRC->ExecuteCommand(pCommandReceived, true);
@@ -224,6 +228,10 @@ void *clientNetFunction(void *pParam) {//function connects to the boat server an
 				if (pCommandReceived->nCommand==THRUST_ON||pCommandReceived->nCommand==THRUST_OFF) {
 					g_lastNetworkCommandTime=millis();
 				}
+				//test
+				sprintf(sMsg,"Net Command Received: %d\n",pCommandReceived->nCommand);
+				g_shiplog.LogEntry(sMsg,true);
+				//end test
 				pthread_mutex_lock(&g_remoteCommandsMutex);
 				g_remoteCommands.push_back(pCommandReceived);
 				pRC->ExecuteCommand(pCommandReceived, false);
@@ -336,8 +344,10 @@ void *sensorCollectionFunction(void *pParam) {
 	const double BATT_VOLTAGE_CUTOFF = 6.0;//if the battery voltage falls below this level, then we can assume that the user must have switched off the +12V power supply
 	const double FULL_POWER_VOLTAGE = 13.0;//if the battery voltage rises above this level, then we can assume that the battery has become fully charged and the boat is capable of full-speed operation
 	const double LOW_POWER_VOLTAGE = 11.33;//if the battery voltage falls below this level, then there is not much charge left, need to conserve power so shutoff power to thrusters and hope for sunlight!
+	const int MIN_LIDAR_DETECTIONS = 3;//number of consecutive LiDAR readings to require before taking some sort of evasive action (avoids false positives which tend to appear on bright days)
 	unsigned int uiLastBattVoltageMeasurement = 0;//time in ms of last battery voltage measurement
 	unsigned int uiLastLiDARMeasurement = 0;//time in ms of last LiDAR measurement
+	unsigned int uiObjectCount = 0;//number of consecutive times that object has been detected using LiDAR
 	g_bSensorThreadRunning = true;
 	//test
 	printf("started sensor collection thread\n");
@@ -415,6 +425,13 @@ void *sensorCollectionFunction(void *pParam) {
 								bFileCommandSleep = true;
 							}
 							bTravelToSunnySpot = g_fileCommands->m_bTravelToSunnySpot;
+							if (!g_fileCommands->m_bTraveledToSunnySpot&&!bTravelToSunnySpot) {
+								char szMsg[256];
+								sprintf(szMsg,"Battery is only %.2f V, set flag to go to sunny spot.\n",dBattVoltage);
+								g_shiplog.LogEntry(szMsg,true);
+								g_fileCommands->TravelToSunnySpot(dBattVoltage,g_batteryCharge);
+								bTravelToSunnySpot = true;
+							}
 						}
 						if (!bTravelToSunnySpot) {//not trying to travel to a sunny spot for recharging
 							//turn off thrusters
@@ -428,14 +445,8 @@ void *sensorCollectionFunction(void *pParam) {
 									dBattVoltage,g_navigator->GetLatitude(),g_navigator->GetLongitude());
 								strcpy(szSubject,(char *)"Low Battery Alarm!");
 								g_notifier.IssueNotification(szAlarmMsg,szSubject,(void *)&g_shiplog);
-					
-								if (bFileCommandSleep) {//sleep until morning time
-									EnterSleepMode(g_fileCommands->GetSleepTimeHrs()*3600);
-								}
-								else {
-									//enter low power mode for an hour
-									EnterSleepMode(3600);
-								}
+								//enter low power mode for an hour
+								EnterSleepMode(3600);
 							}
 						}
 					}
@@ -468,29 +479,31 @@ void *sensorCollectionFunction(void *pParam) {
 			//if (signalStrength>=MIN_SIGNAL_STRENGTH&&dDistMeters<13) { //--> uncomment for TF Mini LiDAR
 			if (dDistMeters>0.05&&dDistMeters<13) {//sometimes get 0.01 false readings, so look for > 0.05
 				//detected some sort of obstacle
-				//test
-				char szTest[256];
-				sprintf(szTest,"Object detected at %.2f m\n",dDistMeters);
-				g_shiplog.LogEntry(szTest,true);
-				//end test
-				if (g_bObjectPictures) {
-					g_vision.CaptureFrameWithDistText(dDistMeters);//capture frame of video with an estimate of the distance to the object (in m) superimposed on the picture (use autocapture settings for filename)
-				}
-				if (g_bLiDARSafetyMode) {//make sure thrusters are turned off in order to minimize potential impact from collision
-					if (g_thrusters!=nullptr&&!g_thrusters->isInSafetyMode()) {
-						char obstacleMsg[128];
-						sprintf(obstacleMsg,(char *)"Obstacle detected %.2f m away. Safety mode engaged, thrusters turned off.\n",dDistMeters);
-						g_shiplog.LogEntry(obstacleMsg,true);
-						g_thrusters->SetObstacleSafetyMode(true);
+				uiObjectCount++;
+				if (uiObjectCount>=MIN_LIDAR_DETECTIONS) {
+					char szTest[256];
+					sprintf(szTest,"Object detected at %.2f m\n",dDistMeters);
+					g_shiplog.LogEntry(szTest,true);
+					if (g_bObjectPictures) {
+						g_vision.CaptureFrameWithDistText(dDistMeters);//capture frame of video with an estimate of the distance to the object (in m) superimposed on the picture (use autocapture settings for filename)
 					}
-				}
-				else if (g_bLiDARAvoidanceMode) {
-					pthread_mutex_lock(&g_remoteCommandsMutex);
-					g_navigator->AddObstacleAtCurrentHeading();//inform the navigation object that there is an obstacle at the current heading
-					pthread_mutex_unlock(&g_remoteCommandsMutex);
+					if (g_bLiDARSafetyMode) {//make sure thrusters are turned off in order to minimize potential impact from collision
+						if (g_thrusters!=nullptr&&!g_thrusters->isInSafetyMode()) {
+							char obstacleMsg[128];
+							sprintf(obstacleMsg,(char *)"Obstacle detected %.2f m away. Safety mode engaged, thrusters turned off.\n",dDistMeters);
+							g_shiplog.LogEntry(obstacleMsg,true);
+							g_thrusters->SetObstacleSafetyMode(true);
+						}
+					}
+					else if (g_bLiDARAvoidanceMode) {
+						pthread_mutex_lock(&g_remoteCommandsMutex);
+						g_navigator->AddObstacleAtCurrentHeading((void *)&g_shiplog);//inform the navigation object that there is an obstacle at the current heading
+						pthread_mutex_unlock(&g_remoteCommandsMutex);
+					}
 				}
 			}
 			else {//no obstacles, or at least nothing within 13 m
+				uiObjectCount=0;
 				if (g_bLiDARSafetyMode) {//make sure thrusters are turned off in order to minimize potential impact from collision
 					if (g_thrusters&&g_thrusters->isInSafetyMode()) {		
 						g_shiplog.LogEntry((char *)"Obstacle no longer detected. Safety mode disengaged.\n",true);
@@ -507,12 +520,15 @@ void *sensorCollectionFunction(void *pParam) {
 			time(&rawtime);
 			timeinfo = localtime(&rawtime);
 			if (g_sensorDataFile->isTimeToLogSensorData(timeinfo)) {
+				pthread_mutex_lock(&g_remoteCommandsMutex);
+				g_thrusters->Stop();
 				SensorDeploy s(g_rootFolder,false);
 				s.Deploy();
-				usleep(10000000);//wait ten seconds for sensors to stabilize in water
+				usleep(10000000);//wait 10 seconds for sensors to stabilize in water
 				g_sensorDataFile->CollectData();
 				s.Retract();
 				g_sensorDataFile->SaveData(timeinfo, g_nLoggingIntervalSec);
+				pthread_mutex_unlock(&g_remoteCommandsMutex);
 			}
 		}
 	}
@@ -860,6 +876,12 @@ bool CheckUserQuit(int nKeyboardChar) {
 	return true;//user typed check_word
 }
 
+void baz() {
+ int *foo = (int*)-1; // make a bad pointer
+  printf("%d\n", *foo);       // causes segfault
+}
+
+
 int main(int argc, const char * argv[]) {
 	getcwd(g_rootFolder,PATH_MAX);
 	g_shipdiagnostics = nullptr;
@@ -886,6 +908,7 @@ int main(int argc, const char * argv[]) {
 	g_keyTypedIndex = 0;
 
 	g_navigator = new Navigation(-18,&g_i2cMutex);//set to - 18 degrees magnetic declination for New Brunswick, Canada
+
 	struct ifaddrs * ifAddrStruct = NULL;
 	struct ifaddrs * ifa = NULL;
 	void * tmpAddrPtr = NULL;
@@ -933,7 +956,9 @@ int main(int argc, const char * argv[]) {
 				char sMsg[256];
 				sprintf(sMsg,"Startup voltage is: %.3f V, should be > %.2f V.\n",dVoltage,g_batteryCharge->GetMinStartupVoltage());
 				g_shiplog.LogEntry(sMsg,true);
-				g_batteryCharge->SetInsufficientStartupCharge();
+				if (argc>=3) {//file commands were specified, so make sure AMOS is set to go back into sleep mode and try again later
+					g_batteryCharge->SetInsufficientStartupCharge();
+				}
 				bLowStartupVoltage = true;
 			}
 		}
@@ -943,7 +968,7 @@ int main(int argc, const char * argv[]) {
 	//test
 	printf("Got data logging preferences.\n");
 	//end test
-
+	bool bContinuedFromPrevious = false;
 	if (argc>=3) {
 		char *commandFilename = (char *)argv[2];
 		g_fileCommands = new FileCommands(g_rootFolder,commandFilename,g_navigator,g_thrusters,g_sensorDataFile,g_lidar,&g_bCancelFunctions);
@@ -951,12 +976,17 @@ int main(int argc, const char * argv[]) {
 			printf("Error trying to open or parse file: %s\n",commandFilename);
 			return 2;
 		}
+		if (!FileCommands::HasGPSWaypoints(g_fileCommands)) {//don't worry about low startup voltage if boat is being manually navigated
+			bLowStartupVoltage = false;
+			g_batteryCharge->IgnoreInsufficentStartupCharge();
+		}
 		if (bLowStartupVoltage) {
 			g_fileCommands->TravelToSunnySpot(dVoltage,g_batteryCharge);	
 		}
 		if (argc>=4) {
 			if (strcmp(argv[3],(char *)"continue")==0) {
 				g_fileCommands->ContinueFromPrevious();//continue at the last known stage of the file command (i.e. from previous program instance, useful for example in picking up where you left off if the program crashes for some mysterious reason)
+				bContinuedFromPrevious = true;
 			}
 		} 
 		//test
@@ -982,6 +1012,9 @@ int main(int argc, const char * argv[]) {
 	StartGPSThread();//start thread for receiving GPS data
 	//execute this loop until we get some accurate GPS data before doing anything else
 	bool bGotAccurateGPSData = false;
+	if (!FileCommands::HasGPSWaypoints(g_fileCommands)) {
+		bGotAccurateGPSData = true;//no need to wait for gps data if file commands do not contain any GPS waypoints
+	}
 	const int REQUIRED_NUM_SATELLITES = 4;//required number of GPS satellites for accurate position data
 	while (g_bKeepGoing&&!bGotAccurateGPSData) {
 		REMOTE_COMMAND *pRC = GetNextCommand();
@@ -1021,6 +1054,10 @@ int main(int argc, const char * argv[]) {
 
 	StartDataCollectionThread();//start thread for receiving sensor data
 	if (g_fileCommands!=nullptr) {
+		if (bContinuedFromPrevious) {
+			//get closest GPS waypoint
+			g_fileCommands->SetStepToClosestGPSWaypoint();//necessary to do this in case AMOS drifted a long distance while sleeping
+		}
 		StartFileCommandsThread();//start thread for executing commands from a text file
 	}
 

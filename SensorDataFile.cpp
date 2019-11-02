@@ -50,7 +50,7 @@ SensorDataFile::SensorDataFile(int *sensorTypes, int nNumSensors, void *sensorOb
 	m_dataFile = nullptr;
 	m_szDataFilePath = new char[strlen(szDataFilePath)+1];
 	strcpy(m_szDataFilePath, szDataFilePath);
-	CreateDataFile();
+	//CreateDataFile();
 }
 
 SensorDataFile::~SensorDataFile() {//destructor
@@ -70,21 +70,19 @@ SensorDataFile::~SensorDataFile() {//destructor
 		delete []m_szDataFilePath;
 		m_szDataFilePath=nullptr;
 	}
-	if (m_dataFile) {
-		if (m_dataFile->is_open()) {
-			m_dataFile->close();
-		}
-		delete m_dataFile;
-		m_dataFile=nullptr;
-	}
+	CloseDataFile();
 }
 
 //SaveData: save the current sample of data to file
 //sampleTime = structure defining the time and date of the sample
 //nLoggingIntervalSec = the logging interval in seconds
 void SensorDataFile::SaveData(struct tm *sampleTime, int nLoggingIntervalSec) {
+	if (!OpenDataFileForAppending()) {
+		return;
+	}
 	char * szFormattedData = GetFormattedData(sampleTime);
 	m_dataFile->write(szFormattedData, strlen(szFormattedData));
+	CloseDataFile();
 	delete []szFormattedData;
 	//reset data flags
 	for (int i=0;i<m_nNumSensors;i++) {
@@ -119,7 +117,7 @@ void SensorDataFile::SetData(int nDataType, double dData) {//sets a particular d
 	}
 }
 
-bool SensorDataFile::CreateDataFile() {//open data file for appending data or create data file if it doesn't exist already
+bool SensorDataFile::OpenDataFileForAppending() {//open data file for appending data or create data file if it doesn't exist already
 	m_dataFile = new std::ofstream();
 	try {
 		m_dataFile->open(m_szDataFilePath,std::ios_base::out|std::ios_base::app);//open file for appending
@@ -510,7 +508,7 @@ void SensorDataFile::SetFilename(char * pszFilename) {
 	}
 	m_szDataFilePath = new char[strlen(pszFilename)+1];
 	strcpy(m_szDataFilePath, pszFilename);
-	CreateDataFile();
+	//CreateDataFile();
 }
 
 /**
@@ -579,4 +577,14 @@ void SensorDataFile::CollectAndSaveDataNow() {
 	time(&rawtime);
 	timeinfo = localtime(&rawtime);
 	SaveData(timeinfo,0);
+}
+
+void SensorDataFile::CloseDataFile() {//close the data file (if it is currently open)
+	if (m_dataFile!=nullptr) {
+		if (m_dataFile->is_open()) {
+			m_dataFile->close();
+		}
+		delete m_dataFile;
+		m_dataFile=nullptr;
+	}
 }

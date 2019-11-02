@@ -59,10 +59,11 @@ public:
 	~Navigation();//destructor
 
 	IMU_DATASAMPLE m_imuData;//structure for holding compass, inertial data
+	bool m_bExitNavFunction;//flag can be used to exit out of some navigation functions
 	//functions
 	static double ComputeDistBetweenPts(double dLatitudeDeg1, double dLongitudeDeg1, double dLatitudeDeg2, double dLongitudeDeg2);//use GPS locations of 2 points to get the distance between 2 points 
 	void SetDriveTimeoutSeconds(unsigned int uiTimeoutSec);//timeout on drive to location function after this many seconds
-	void AddObstacleAtCurrentHeading();//inform this Navigation object that there is an obstacle at the current heading
+	void AddObstacleAtCurrentHeading(void *pShipLog);//inform this Navigation object that there is an obstacle at the current heading
 	bool HaveValidGPS();//return true if we have obtained at least one sample of valid GPS data
 	double GetLatitude();//return the current latitude of the boat (as determined by GPS) in degrees
 	double GetLongitude();//return the current longitude of the boat (as determined by GPS) in degrees 

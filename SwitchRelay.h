@@ -11,7 +11,7 @@
 #include <memory>
 #include <vector>
 
-#define SOLAR_SWITCH 9 //GPIO pin used for switching on / off the +ve solar output to the solar charge controller
+#define SOLAR_SWITCH 22 //GPIO pin used for switching on / off the +ve solar output to the solar charge controller
 #define DEFAULT_MAX_ALLOWED_VOLTAGE 13.6 //the default maximum voltage that we want to see on the battery. If the voltage of the battery is measured above this level, then the solar input to the charge controller should be switched off.
 #define DEFAULT_FULLY_CHARGED_VOLTAGE 13.0 //the default voltage that corresponds to the fully charged state of the battery. 
 

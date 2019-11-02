@@ -12,7 +12,7 @@
 #define LOW_SENSITIVITY 5 //low sensitivity detection. Overrides default valid measurement detection algorithm, and uses a threshold value for low sensitivity and noise.
 
 //pin for toggling LiDAR on / off
-#define LIDAR_ON_OFF_PIN 10
+#define LIDAR_ON_OFF_PIN 5
 
 class LIDARLite
 {

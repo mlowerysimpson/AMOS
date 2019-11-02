@@ -206,9 +206,15 @@ bool AToD::GetMeasurement(int nChannel, int nPGAGain, double dMeasurementGain, d
 	return true;
 }
 
-//GetBatteryVoltage: gets the battery voltage for AMOS, assumes various resistor divider and channel settings for the A to D measurement (see function definition below for details)
-//dBattVoltage = returns the voltage of the battery in volts
-bool AToD::GetBatteryVoltage(double &dBattVoltage) {//gets the battery voltage for AMOS, assumes various resistor divider and channel settings for the A to D measurement
+/**
+ * @brief gets the battery voltage for AMOS, assumes various resistor divider and channel settings for the A to D measurement (see function definition below for details)
+ * 
+ * @param dBattVoltage the returned battery voltage in volts.
+ * @param pBattCharge pointer to a BatteryCharge object used to help monitor battery charge levels. Set to nullptr if you don't want to use the measured voltage for monitoring the battery charge level.
+ * @return true if the battery voltage could be obtained successfully.
+ * @return false if there was a problem getting the battery voltage.
+ */
+bool AToD::GetBatteryVoltage(double &dBattVoltage, BatteryCharge *pBattCharge) {//gets the battery voltage for AMOS, assumes various resistor divider and channel settings for the A to D measurement
 	//assumes use of voltage divider of two 10K resistors, which effectively halves the battery voltage at the CH1 input
 	const double R1 = 51.0;//51k resistor
 	const double R2 = 10.0;//10k resistor
@@ -227,6 +233,9 @@ bool AToD::GetBatteryVoltage(double &dBattVoltage) {//gets the battery voltage f
 		return false;
 	}
 	m_dMostRecentBattVoltage = dBattVoltage;
+	if (pBattCharge!=nullptr) {
+		pBattCharge->AddBattVoltageMeasurement(dBattVoltage);//store battery voltage for monitoring battery charge level
+	}
 	return true;
 }
 
@@ -241,10 +250,10 @@ bool AToD::GetBatteryVoltage(double &dBattVoltage) {//gets the battery voltage f
 bool AToD::SendBatteryVoltage(int nHandle, bool bUseSerial) {
 	BOAT_DATA *pBoatData = BoatCommand::CreateBoatData(BATTVOLTAGE_DATA_PACKET);
 	if (m_dMostRecentBattVoltage==0.0) {//battery might be switched off, or perhaps we haven't tried getting battery voltage yet, so try now
-		GetBatteryVoltage(m_dMostRecentBattVoltage);
+		GetBatteryVoltage(m_dMostRecentBattVoltage,nullptr);
 	}
 	else if ((millis() - m_uiLastMeasurementTime)>(1000*RECENT_THRESHOLD_SEC)) {
-		GetBatteryVoltage(m_dMostRecentBattVoltage);
+		GetBatteryVoltage(m_dMostRecentBattVoltage,nullptr);
 	}
 	float fBattVoltage = (float)m_dMostRecentBattVoltage;
 	memcpy(pBoatData->dataBytes,&fBattVoltage,sizeof(float));

@@ -1,5 +1,7 @@
 //ShipLog.cpp  implementation file for ShipLog class
 #include "ShipLog.h"
+#include "Util.h"
+
 
 ShipLog::ShipLog() {
 	m_logFile = nullptr;
@@ -40,7 +42,10 @@ ShipLog::~ShipLog() {
 //bPrintToScreen: if true, also adds the log text to the standard output
 void ShipLog::LogEntry(char *szLogEntry, bool bPrintToScreen) {//add an entry to the log file, and optionally print to screen (standard output)
 #ifndef _WIN32
-	pthread_mutex_lock(&m_logMutex);
+	//pthread_mutex_lock(&m_logMutex);
+	if (!Util::trylock(&m_logMutex,1000)) {//unable to get mutex, just return without logging anything
+		return;
+	}
 #endif
 	if (!m_logFile) {
 		m_logFile = new std::ofstream();
