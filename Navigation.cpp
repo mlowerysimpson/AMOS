@@ -818,7 +818,7 @@ char *Navigation::GetStatusLogText() {
 		float fObstacleAvoidanceOffset = GetObstacleAvoidanceHeadingOffset((float)dDesiredHeading);
 		dDesiredHeading+=fObstacleAvoidanceOffset;
 		float fHeadingError = GetHeadingError(dDesiredHeading, pShipLog);//use mix of current compass reading and historical compass and GPS data to determine the current heading error of the boat
-		if (fObstacleAvoidanceOffset!=0||(fabs(fHeadingError)>MAX_ALLOWED_HEADING_ERROR&&((uiTimeNow - m_uiLastCompassCheckTime)>COMPASS_REORIENT_TIME))) {
+		if (fabs(fHeadingError)>MAX_ALLOWED_HEADING_ERROR&&((uiCurrentTime - m_uiLastCompassCheckTime)>COMPASS_REORIENT_TIME||fObstacleAvoidanceOffset!=0)) {
 			float fDesiredCompassHeading = m_imuData.heading - fHeadingError;//note desired compass heading for the boat can in general differ from the desired GPS track due to wind and water currents
 			TurnToCompassHeading(fDesiredCompassHeading, pThrusters, command_mutex, lastNetworkCommandTimeMS, pShipLog, bCancel,nPriority);//turn boat to desired heading to correct GPS track
 			fLSpeed=2;
