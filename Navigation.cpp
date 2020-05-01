@@ -27,6 +27,7 @@ Navigation::Navigation(double dMagDeclination, pthread_mutex_t *i2c_mutex) {
 	m_currentGPSData=nullptr;
 	m_nMaxPriority = LOW_PRIORITY;
 	m_bExitNavFunction = false;
+	m_dPlannedHeading = -1.0;//don't use if < 0
 	m_uiDriveToLocationTimeout = 0;
 	m_fObstacleHeadingOffset = 0;
 	m_i2c_mutex = i2c_mutex;
@@ -125,6 +126,7 @@ Navigation::~Navigation() {
 			m_obstacles[i] = nullptr;
 		}
 	}
+	ClearRoutePlan();
 	m_nNumObstacles = 0;
 }
 
@@ -684,7 +686,7 @@ char *Navigation::GetStatusLogText() {
  void Navigation::DriveToLocation(double dLatitude, double dLongitude, void *pThrusters, pthread_mutex_t *command_mutex, unsigned int *lastNetworkCommandTimeMS, void *pShipLog, int nInterpAmount, bool *bCancel, int nPriority) {
 	const float MAX_ALLOWED_HEADING_ERROR = 30;//need to do a full stop turn when the course of the GPS track deviates more than this from the desired track
 	const unsigned int COMPASS_REORIENT_TIME = 60000;//minimum number of ms to go without doing a full magnetic compass check 
-	const unsigned int CHECK_DIST_INTERVAL_MS = 240000;//time in ms to check to make sure that we are making progress toward the destination, if not getting closer, then exit this function and proceed to next destination (if any)
+	const unsigned int CHECK_DIST_INTERVAL_MS = 120000;//time in ms to check to make sure that we are making progress toward the destination, if not getting closer, then exit this function and proceed to next destination (if any)
 	double dMaxSpeed = m_dMaxSpeed;//normally the maximum speed will be MAX_THRUSTER_SPEED, except when the boat gets close to its destination, or when battery charge is getting low, then the speed is reduced
 	double dOldDistToTarget = 0.0;//old distance to target
 	unsigned int uiOldDistTime = 0;//time of old distance to target measurement
@@ -695,6 +697,7 @@ char *Navigation::GetStatusLogText() {
 		//must be in low power mode, not enough power to drive anywhere
 		return;
 	}
+	UpdatePlannedHeading(dLatitude,dLongitude);//update the planned heading if the specified location is amongst the planned waypoints
 	char sMsg[256];
 	ShipLog *pLog = (ShipLog *)pShipLog;
 	//test
@@ -804,7 +807,7 @@ char *Navigation::GetStatusLogText() {
 		}
 		double dDesiredHeading = ComputeHeadingAndDistToDestination(dLatitude,dLongitude,dDistToDest);//use current GPS location to get heading and distance to destination
 		unsigned int uiCurrentTime = millis();
-		if ((uiCurrentTime - uiOldDistTime)>=CHECK_DIST_INTERVAL_MS) {
+		if ((uiCurrentTime - uiOldDistTime)>=CHECK_DIST_INTERVAL_MS||isMovedBeyondDestination(dDesiredHeading)) {
 			if (dDistToDest>dOldDistToTarget) {//getting further away from destination, after CHECK_DIST_INTERVAL_MS so exit this function. Probably going against a strong wind.
 				//test
 				sprintf(sMsg,"distance to target has increased from %.0f m to %.0f m\n",dOldDistToTarget,dDistToDest);
@@ -1790,4 +1793,119 @@ void Navigation::AddObstacleAtCurrentHeading(void *pShipLog) {//inform this Navi
  */
 void Navigation::SetDriveTimeoutSeconds(unsigned int uiTimeoutSec) {
 	m_uiDriveToLocationTimeout = uiTimeoutSec;
+}
+
+/**
+ * @brief clears all of the planned waypoints from memory
+ * 
+ */
+void Navigation::ClearRoutePlan() {
+	int nNumPlannedWaypoints = m_plannedWaypoints.size();
+	if (nNumPlannedWaypoints>0) {
+		for (int i=0;i<nNumPlannedWaypoints;i++) {
+			if (m_plannedWaypoints[i]!=nullptr) {
+				delete m_plannedWaypoints[i];
+				m_plannedWaypoints[i]=nullptr;	
+			}	
+		}
+		m_plannedWaypoints.clear();
+	}
+}
+
+/**
+ * @brief adds a waypoint to the planned route
+ * 
+ * @param dLatitude the desired latitude (in degrees) of the planned waypoint
+ * @param dLongitude the desired longitude (in degrees) of the planned waypoint 
+ */
+void Navigation::AddWaypointToPlan(double dLatitude, double dLongitude) {
+	NAV_DATA *pPlannedPt = new NAV_DATA;
+	pPlannedPt->dLatitude = dLatitude;
+	pPlannedPt->dLongitude = dLongitude;
+	pPlannedPt->uiTimeMS = 0;
+	pPlannedPt->dCompassHeading = 0.0;
+	int nNumPlannedPts = m_plannedWaypoints.size();//# of planned points already (before adding this one)
+	if (nNumPlannedPts>0) {
+		//get intended direction from prevoius waypoint to this waypoint
+		double dPrevLatitude = m_plannedWaypoints[nNumPlannedPts-1]->dLatitude;
+		double dPrevLongitude = m_plannedWaypoints[nNumPlannedPts-1]->dLongitude;
+		double dIntendedHeading = ComputeHeadingBetweenPts(dPrevLatitude,dPrevLongitude,dLatitude,dLongitude);
+		pPlannedPt->dCompassHeading = dIntendedHeading;
+	}
+	m_plannedWaypoints.push_back(pPlannedPt);
+}
+
+
+/**
+ * @brief computes the heading direction to go from pt1 to pt2. Assumes that pt1 and pt2 are relatively close to one another, i.e. within 1000 km or so for best results.
+ * 
+ * @param dLatitude1 the latitude of pt1 in degrees
+ * @param dLongitude1 the longitude of pt1 in degrees
+ * @param dLatitude2 the latitude of pt2 in degrees
+ * @param dLongitude2 the longitude of pt2 in degrees
+ * @return double angle between pt1 and pt2 that corresponds to the intended direction of travel.
+ */
+double Navigation::ComputeHeadingBetweenPts(double dLatitude1, double dLongitude1, double dLatitude2, double dLongitude2) {
+	const double dPI = 3.14159;
+	double dir_vec[2];//direction vector between pt1 and pt2
+	dir_vec[0] = dLongitude2 - dLongitude1;
+	dir_vec[1] = dLatitude2 - dLatitude1;
+	double dHeading = atan2(dir_vec[0],dir_vec[1])*180/dPI;
+	if (dHeading<0) {
+		dHeading+=360;
+	}
+	return dHeading;
+}
+
+void Navigation::UpdatePlannedHeading(double dLatitude,double dLongitude) {//update the planned heading if the specified location is amongst the planned waypoints
+	const double TOL = .000001;//tolerance in degrees for lat and long
+	int nNumPlannedPts = m_plannedWaypoints.size();
+	if (nNumPlannedPts<=0) {
+		return;
+	}
+	for (int i=0;i<nNumPlannedPts;i++) {
+		if (fabs(dLatitude - m_plannedWaypoints[i]->dLatitude)<TOL&&fabs(dLongitude-m_plannedWaypoints[i]->dLongitude)<TOL) {
+			//point is a planned waypoint
+			if (i>0) {//get direction heading from previous waypoint to this one
+				m_dPlannedHeading = ComputeHeadingBetweenPts(m_plannedWaypoints[i-1]->dLatitude,m_plannedWaypoints[i-1]->dLongitude,dLatitude,dLongitude);
+				m_plannedWaypoints[i]->dCompassHeading = m_dPlannedHeading;
+			}
+			else {
+				//get planned heading from current location to first planned waypoint
+				m_dPlannedHeading = ComputeHeadingBetweenPts(m_dLatitude,m_dLongitude,m_plannedWaypoints[0]->dLatitude,m_plannedWaypoints[0]->dLongitude);
+				m_plannedWaypoints[0]->dCompassHeading = m_dPlannedHeading;
+			}
+			return;
+		}
+	}
+}
+
+bool Navigation::isMovedBeyondDestination(double dHeadingToTarget) {//checks to see if the required heading to go to a target is counter to the current planned heading, indicating that the boat has exceeded its target location
+	//return true if the boat is trying to move counter to its intended heading direction
+	if (m_dPlannedHeading<0) {
+		return false;//don't have a planned heading yet
+	}
+	double to_target_vec[2];//the 2D vector representing the direction required to follow a heading to the target (given by dHeadingToTarget)
+	double planned_vec[2];
+	Util::HeadingToVec(dHeadingToTarget,to_target_vec);
+	Util::HeadingToVec(m_dPlannedHeading,planned_vec);
+	double dDotProduct = to_target_vec[0]*planned_vec[0] + to_target_vec[1]*planned_vec[1];
+	if (dDotProduct<0) {
+		return true;
+	}
+	return false;
+}
+
+void Navigation::PrintOutPlannedPts() {//print out the planned waypoints and heading directions
+	int nNumPlannedPts = m_plannedWaypoints.size();
+	for (int i=0;i<nNumPlannedPts;i++) {
+		if (m_plannedWaypoints[i]) {
+			if (m_plannedWaypoints[i]->dCompassHeading>=0) {
+				printf("Travel to %.6f, %.6f following course of %.1f degrees.\n",m_plannedWaypoints[i]->dLatitude,m_plannedWaypoints[i]->dLongitude,m_plannedWaypoints[i]->dCompassHeading);
+			}
+			else {
+				printf("Travel to %.6f, %.6f.\n",m_plannedWaypoints[i]->dLatitude,m_plannedWaypoints[i]->dLongitude);
+			}
+		}
+	}
 }

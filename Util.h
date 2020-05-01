@@ -21,6 +21,7 @@ public:
     static int getch_noblock();//get a character from the keyboard without blocking
     static bool ContainsHelpFlag(int argc, const char * argv[]);//returns true if any of the arguments contain -h or -H
     static bool isSerPort(const char *szDevice);//return true if szDevice corresponds to a serial port on this computer, i.e. is of the form /dev/serial# where # is some number >=0
+    static void HeadingToVec(double dHeadingDeg,double heading_vec[]);//converts a heading in degrees to a 2-element vector with components in the E-W and N-S directions
     time_t GetNextLogTime(int nLoggingIntervalSec);//get the time of the next sample (in seconds since midnight, Jan, 1, 1970)
 	//test
 	//printf("nLoggingIntervalSec = %d\n",nLoggingIntervalSec);

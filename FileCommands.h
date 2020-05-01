@@ -31,10 +31,13 @@ public:
 
 private:
 	//functions
+	void SetRoutePlan();//informs the Navigation object of the route plan to assist it with achieving the desired waypoints
+	void TakePhoto(void *pShipLog);//take a high-resolution photograph and save to file
 	bool GetClosestSafePoint(double dCurrentLatitude, double dCurrentLongitude, double &dSunnyLatitude, double &dSunnyLongitude);//find the closest safe point (if any) that was defined in the file command script
 	void CheckTime();//check to see if it is time for a rest, time to go to sleep, or morning time.
 	int getMatchingLabelIndex(char *pLabelText);//find the index of a label that matches pLabelText
 	int DoCommand(REMOTE_COMMAND *pCommand, pthread_mutex_t *command_mutex, unsigned int *lastNetworkCommandTimeMS, void *pShipLog);//execute a particular file command
+	void AddCommand(int nCommandType);//adds a command to perform some action (no additional parameters required)
 	void AddCommand(int nCommandType, std::string sText);//adds a text-based command to the list
 	void AddCommand(int nCommandType, double dVal);//adds a command to the list that is associated with a single numeric value
 	void AddCommand(int nCommandType, double dVal1, double dVal2);//adds a command to the list that is associated with two numeric values (ex: latitude and longitude)
@@ -50,6 +53,7 @@ private:
 	bool readInFile();//read in and parse the text commands from the file (return true if successful)
 	void SaveCurrentCommand();//save the current command index to the preferences file (prefs.txt)
 
+	unsigned int m_uiPictureNumber;//the number of the last picture taken using the "photo" file command
 	vector <double>m_safeLat;//safe point latitudes (in degrees) where solar re-charging is optimal
 	vector <double>m_safeLong;//safe point longitudes (in degrees) where solar re-charging is optimal
 	LIDARLite *m_pLiDAR;//object used for making LiDAR measurements (can be turned off to save a bit of power)

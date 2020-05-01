@@ -991,6 +991,7 @@ int main(int argc, const char * argv[]) {
 		} 
 		//test
 		g_fileCommands->PrintOutCommandList();
+		g_navigator->PrintOutPlannedPts();
 		//end test
 	}
 	//store command line parameters

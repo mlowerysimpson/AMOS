@@ -30,6 +30,7 @@ FileCommands::FileCommands(char *szRootFolder, char *szFilename, Navigation *pNa
 	m_bSleepTime = false;
 	m_bTravelToSunnySpot = false;
 	m_bTraveledToSunnySpot = false;
+	m_uiPictureNumber = 0;
 	m_dMorningTimeHrs = 0.0;
 	m_dLowVoltage = 0.0;
 	m_dRestTimeHrs = 0.0;
@@ -47,6 +48,7 @@ FileCommands::FileCommands(char *szRootFolder, char *szFilename, Navigation *pNa
 	m_pNavigator = pNavigator;//the navigation object used for getting GPS data, compass data, plotting courses, etc.
 	m_pThrusters = pThrusters;//the 2 props that are used to propel the boat around
 	m_nCurrentCommandIndex=0;
+	SetRoutePlan();
 	CheckTime();
 }
 
@@ -111,7 +113,8 @@ bool FileCommands::parseLine(std::string sLine) {//parse command from line of te
 	}
 	std::transform(sLine.begin(), sLine.end(), sLine.begin(), ::tolower);
 	int nHeadingIndex = sLine.find("heading");
-	if (nHeadingIndex>=0) {//heading command
+	int nPhotoIndex = sLine.find("photo");
+	if (nHeadingIndex>=0&&nPhotoIndex<0) {//heading command
 		int i = skipToNumericVal(sLine, nHeadingIndex+7);
 		if (i<0) return false;
 		std::string sRemainder = sLine.substr(i);
@@ -176,6 +179,51 @@ bool FileCommands::parseLine(std::string sLine) {//parse command from line of te
 		}
 		else {
 			return false;//GPS waypoint is not formatted correctly(?)
+		}
+	}
+	if (nPhotoIndex>=0) {//take one or more photos at the current location
+		int nNumPhotos = 0;
+		double dStartHeading = 0.0;//heading at which we start taking photos
+		double dEndHeading = 0.0;//heading at which the last photo is taken
+		int nEndHeadingIndex = sLine.find("end_heading");	
+		if (nEndHeadingIndex>=0) {
+			if (sscanf(sLine.c_str(),"photo: num=%d, start_heading =%lf, end_heading =%lf",&nNumPhotos,&dStartHeading,&dEndHeading)!=3) {
+				//problem parsing line, not formatted correctly?
+				return false;
+			}
+			double dHeadingRange = dEndHeading-dStartHeading;
+			AddCommand(FC_HEADING,dStartHeading);
+			AddCommand(FC_PHOTO);
+			for (int i=1;i<(nNumPhotos-1);i++) {
+				double dIntermediateHeading = 0.0;
+				double dHeadingDif = dEndHeading - dStartHeading;
+				if (dHeadingDif>=-180&&dHeadingDif<=180) {
+					dIntermediateHeading = ((double)i) / (nNumPhotos - 1) * (dEndHeading - dStartHeading) + dStartHeading;
+				}
+				else if (dHeadingDif<-180) {
+                    double dStart = dStartHeading - 360;
+                    dIntermediateHeading = ((double)i) / (nNumPhotos - 1) * (dEndHeading - dStart) + dStart;
+                }
+                else if (dHeadingDif>180)
+                {
+                    double dStop = dEndHeading - 360;
+                    dIntermediateHeading = ((double)i) / (nNumPhotos - 1) * (dStop - dStartHeading) + dStartHeading;
+                }
+				AddCommand(FC_HEADING, dIntermediateHeading);
+				AddCommand(FC_PHOTO);
+			}
+			AddCommand(FC_HEADING,dEndHeading);
+			AddCommand(FC_PHOTO);
+		}
+		else {
+			//no end heading specified, so just taking a single picture
+			nNumPhotos = 1;
+			if (sscanf(sLine.c_str(),"photo: num=1, start_heading = %lf",&dStartHeading)!=1) {
+				//problem parsing line, not formatted correctly?
+				return false;
+			}
+			AddCommand(FC_HEADING,dStartHeading);
+			AddCommand(FC_PHOTO);
 		}
 	}
 	int nSafepointIndex = sLine.find("safepoint");
@@ -528,6 +576,9 @@ void FileCommands::PrintOutCommandList() {//test function for printing out list 
 				memcpy(&fHeading,m_commandList[i]->pDataBytes,sizeof(float));
 				printf("heading: %.2f deg\n",fHeading);
 			}
+			else if (m_commandList[i]->nCommand==FC_PHOTO) {
+				printf("photo\n");
+			}
 			else if (m_commandList[i]->nCommand==FC_FORWARD) {
 				int nTotalTimeSec=0;
 				memcpy(&nTotalTimeSec,m_commandList[i]->pDataBytes,sizeof(int));
@@ -673,6 +724,9 @@ int FileCommands::DoCommand(REMOTE_COMMAND *pCommand, pthread_mutex_t *command_m
 		memcpy(&fHeading,pCommand->pDataBytes,sizeof(float));
 		m_fLastHeadingCommandAngle = fHeading;
 		m_pNavigator->TurnToCompassHeading(fHeading,(void *)m_pThrusters,command_mutex,lastNetworkCommandTimeMS,pShipLog,m_bCancel,LOW_PRIORITY);
+	}
+	else if (pCommand->nCommand==FC_PHOTO) {
+		TakePhoto(pShipLog);
 	}
 	else if (pCommand->nCommand==FC_FORWARD) {
 		int nTotalTimeSeconds=0;
@@ -997,3 +1051,96 @@ void FileCommands::SetStepToClosestGPSWaypoint() {
 		}
 	}
 }
+
+/**
+ * @brief adds a command to perform some action (no additional parameters required)
+ * 
+ * @param nCommandType the type of command being added (see CommandList.h for a list of commands)
+ */
+void FileCommands::AddCommand(int nCommandType) {
+	REMOTE_COMMAND *pRC = new REMOTE_COMMAND;
+	pRC->nCommand = nCommandType;
+	pRC->nNumDataBytes = 0;
+	pRC->pDataBytes = nullptr;
+	m_commandList.push_back(pRC);
+}
+
+/**
+ * @brief take a high-resolution photograph and save to file. The folder path and filename prefix used for the image file is set in the "[camera]" section of the prefs.txt configuration file.
+ * 
+ * @param pShipLog void pointer to a ShipLog object that can be used to log error messages or other data to a log file.
+ */
+void FileCommands::TakePhoto(void *pShipLog) {
+	char *DEFAULT_IMAGE_FOLDER = "/home/pi/Computer_Programs/RemoteControlTest/Images";
+	char *DEFAULT_IMAGE_PREFIX = "image";
+
+	const unsigned int MAX_FILE_NUMBER = 999999;
+	char prefsFilename[PATH_MAX];			
+	char imageFilename[PATH_MAX];
+	sprintf(prefsFilename,(char *)"%s//prefs.txt",m_szRootFolder);
+	filedata prefsFile(prefsFilename);
+	char *imageFolder = NULL;
+	char *imageFilePrefix = NULL;
+	//get image folder
+	prefsFile.getString("[camera]","storage_folder",&imageFolder);
+	if (imageFolder==NULL) {
+		//use default image folder
+		imageFolder = new char[strlen(DEFAULT_IMAGE_FOLDER)+1];
+		strcpy(imageFolder,DEFAULT_IMAGE_FOLDER);
+	}
+	//get image filename prefix
+	prefsFile.getString("[camera]","filename_prefix",&imageFilePrefix);
+	if (imageFilePrefix==NULL) {
+		//use default image file prefix
+		imageFilePrefix = new char[strlen(DEFAULT_IMAGE_PREFIX)+1];
+		strcpy(imageFilePrefix,DEFAULT_IMAGE_PREFIX);
+	}
+
+	do {
+		m_uiPictureNumber++;
+		//check to see if folder name already has '/' character at the end of it 
+		if (imageFolder[strlen(imageFolder)-1]=='/') {
+			sprintf(imageFilename,"%s%s%05u.jpg",imageFolder,imageFilePrefix,m_uiPictureNumber);
+		}
+		else {//insert '/' character between folder and filename
+			sprintf(imageFilename,"%s/%s%05u.jpg",imageFolder,imageFilePrefix,m_uiPictureNumber);
+		}
+		if (FileCommands::doesFileExist(imageFilename)) {//file exists, increase # and try again
+			continue;
+		}
+		else {
+			break;//found a filename that doesn't already exist
+		}
+	} while (m_uiPictureNumber<MAX_FILE_NUMBER);
+
+	char *commandStr = new char[strlen(imageFilename)+128];
+	sprintf(commandStr,"raspistill -o %s",imageFilename);
+	system(commandStr);
+	char sMsg[256];
+	sprintf(sMsg,"Took photo: %s%05u.jpg",imageFilePrefix,m_uiPictureNumber);
+	((ShipLog *)pShipLog)->LogEntry(sMsg,true);
+	delete []commandStr;
+	delete []imageFilePrefix;
+	delete []imageFolder;
+
+}
+
+void FileCommands::SetRoutePlan() {
+	//informs the Navigation object of the route plan to assist it with achieving the desired waypoints
+	if (m_pNavigator==nullptr) {
+		return;
+	}
+	m_pNavigator->ClearRoutePlan();
+	int nNumCommands = m_commandList.size();
+	for (int i=0;i<nNumCommands;i++) {
+		if (m_commandList[i]) {
+			if (m_commandList[i]->nCommand==FC_GPS_WAYPOINT) {
+				double dLatitude=0.0, dLongitude=0.0;
+				memcpy(&dLatitude,m_commandList[i]->pDataBytes,sizeof(double));
+				memcpy(&dLongitude,&m_commandList[i]->pDataBytes[8],sizeof(double));
+				m_pNavigator->AddWaypointToPlan(dLatitude,dLongitude);
+			}
+		}
+	}
+}
+

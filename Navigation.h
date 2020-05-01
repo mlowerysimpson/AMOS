@@ -61,7 +61,10 @@ public:
 	IMU_DATASAMPLE m_imuData;//structure for holding compass, inertial data
 	bool m_bExitNavFunction;//flag can be used to exit out of some navigation functions
 	//functions
+	void PrintOutPlannedPts();//print out the planned waypoints and heading directions
 	static double ComputeDistBetweenPts(double dLatitudeDeg1, double dLongitudeDeg1, double dLatitudeDeg2, double dLongitudeDeg2);//use GPS locations of 2 points to get the distance between 2 points 
+	void ClearRoutePlan();//clears all of the planned waypoints from memory
+	void AddWaypointToPlan(double dLatitude, double dLongitude);//adds a waypoint to the planned route
 	void SetDriveTimeoutSeconds(unsigned int uiTimeoutSec);//timeout on drive to location function after this many seconds
 	void AddObstacleAtCurrentHeading(void *pShipLog);//inform this Navigation object that there is an obstacle at the current heading
 	bool HaveValidGPS();//return true if we have obtained at least one sample of valid GPS data
@@ -92,6 +95,8 @@ public:
 
 private:
 	//data
+	double m_dPlannedHeading;//the planned heading for the boat to follow en route to a waypoint (0 to 360 degrees, if < 0 then don't use it)
+	vector <NAV_DATA *>m_plannedWaypoints;//planned waypoints and directions for the route that the boat will follow
 	unsigned int m_uiDriveToLocationTimeout;//timeout in seconds for the DriveToLocation function (set to zero to disable timeouts)
 	int m_nNumObstacles;//the number of obstacles that have been found
 	float m_fObstacleHeadingOffset;//a temporary heading offset (in degrees) which is used to help avoiding obstacles
@@ -124,6 +129,8 @@ private:
 	double m_dFilteredYawRate;//rate at which heading of boat is changing (in degrees per second, filtered as an average of the last second of data)
 
 	//functions
+	bool isMovedBeyondDestination(double dHeadingToTarget);//checks to see if the required heading to go to a target is counter to the current planned heading, indicating that the boat has exceeded its target location
+	void UpdatePlannedHeading(double dLatitude,double dLongitude);//update the planned heading if the specified location is amongst the planned waypoints
 	float GetObstacleAvoidanceHeadingOffset(float fDesiredHeading);//get the neccessary heading offset for avoiding obstacles (if any)
 	void CheckPriority(int nPriority);//check to see if there are no other higher priority threads trying to execute a navigation command at the same time
 	void TrimAirRudder(float &fAirRudderAngle,float fHeadingError,float fDesiredHeading,void *pShipLog);//fine-tune air rudder angle in order to correct any heading error
@@ -138,6 +145,7 @@ private:
 	IMU * CreateCompass();//creates a compass object for collecting compass and orientation
 	void IncrementTurningSpeed(float &fSpeedLeft,float &fSpeedRight,float fMaxTurnSpeed,bool bClockWise);//function used to increment turning speed
 	double ComputeHeadingAndDistToDestination(double dLatitudeDeg,double dLongitudeDeg,double &dDistToDestM);//use current GPS location to get initial heading to destination, also returns distance to destination in m
+	static double ComputeHeadingBetweenPts(double dLatitude1, double dLongitude1, double dLatitude2, double dLongitude2);//computes the heading direction to go from pt1 to pt2
 	void ExecuteRandomThrust(void *pThrusters, pthread_mutex_t *command_mutex, unsigned int *lastNetworkCommandTimeMS, void *pShipLog, bool *bCancel);//execute a short burst of random propeller thrust to try to become un-stuck
 	void ResetNavSamples();//reset the buffer that keeps track of historical gps locations & compass headings
 	void AddNavSample(unsigned int uiTimeMS);//add current navigation data to the buffer of samples

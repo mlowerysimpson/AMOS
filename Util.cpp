@@ -1,6 +1,7 @@
 #include "Util.h"
 #include <stdio.h>
 #include <string.h>
+#include <math.h>
 #include <wiringPi.h>
 #include <unistd.h>
 #include <stdlib.h>
@@ -160,4 +161,16 @@ bool Util::trylock(pthread_mutex_t *mut, unsigned int uiTimeoutMS) {
 		usleep(1000);
 	}
 	return false;
+}
+
+/**
+ * @brief converts a heading in degrees to a 2-element vector with components in the E-W and N-S directions
+ * 
+ * @param dHeadingDeg a heading in degrees (0 to 360)
+ * @param heading_vec a two-element vector that represents the direction vector of the heading in E-W and N-S directions
+ */
+void Util::HeadingToVec(double dHeadingDeg,double heading_vec[]) {
+	const double dPI = 3.14159;
+	heading_vec[0] = sin(dHeadingDeg*dPI/180);
+	heading_vec[1] = cos(dHeadingDeg*dPI/180);
 }
