@@ -14,6 +14,8 @@
 #include <sys/ioctl.h>			//Needed for I2C port
 #include <linux/i2c-dev.h>		//Needed for I2C port
 #include <iostream>
+#include <sstream>
+#include <fstream>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -1159,4 +1161,165 @@ bool IMU::GetSample(IMU_DATASAMPLE *pIMUSample, int nNumToAvg) {//collect magnet
 	}
 	this->ComputeOrientation(pIMUSample);
 	return true;
+}
+
+/**
+ * @brief perform a calibration procedure on the magnetometers to get the zero-field offsets for the X and Y magnetometers. Saves the results to the offset registers.
+ *
+ * @return true if the calibration was completed successfully
+ * @return false if there was some sort of error in completing the calibration
+ */
+bool IMU::DoXYMagCal() {//perform a calibration procedure on the magnetometers to get the zero-field offsets for the X and Y magnetometers. Saves the results to the offset registers.
+	printf("Rotate orientation slowly in a horizontal plane for at least one circle.\n");
+	printf("Press \'q\' to quit or \'c\' when finished rotating...\n");
+	double mag_data[NUM_MAGCAL_AVG][3];//do running average of 50 mag samples
+	double avg_mag[3];//averaged magnetometer values
+	unsigned char out_buf[2];
+	memset(mag_data, 0, NUM_MAGCAL_AVG * 3 * sizeof(double));
+	memset(avg_mag, 0, 3 * sizeof(double));//averaged magnetometer values
+	
+	int nKeyPressed = Util::getch_noblock();
+	if (!m_bMagInitialized_OK) {
+		printf("Error, magnetometer was not properly initialized. Cannot do calibration.\n");
+		return false;
+	}
+	pthread_mutex_lock(m_i2c_mutex);
+	if (ioctl(m_file_i2c, I2C_SLAVE, MAG_I2C_ADDRESS) < 0) {
+		printf("Failed (error = %s) to acquire bus access and/or talk to slave magnetometer.\n", strerror(errno));
+		pthread_mutex_unlock(m_i2c_mutex);
+		return false;
+	}
+	//zero X and Y mag offset registers
+	for (int i = 0; i < 4; i++) {
+		out_buf[0] = (unsigned char)(MAG_OFFSET_X_L + i);
+		out_buf[1] = 0x00;
+		if (write(m_file_i2c, out_buf, 2) != 2) {
+			//error, I2C transaction failed
+			printf("Failed to write to the I2C bus for zeroing mag offsets.\n");
+			pthread_mutex_unlock(m_i2c_mutex);
+			return false;
+		}
+	}
+
+	int nSampleNum = 0;
+	double xmag[1024], ymag[1024];//store x and y magnetometer values
+	int i = 0;
+	while (nKeyPressed != 113 && nKeyPressed != 99) {//keep looping, looking for new max or min values until the 'c' for calibrate or 'q' for quit keys are pressed
+		if (WaitForMagDataReady(MAG_STATUS_REG)) {
+			if (Get6BytesRegData(mag_data[nSampleNum % NUM_MAGCAL_AVG], MAG_OUTX_L)) {
+				nSampleNum++;
+				if (GetAvgMagVals(mag_data, avg_mag, nSampleNum))
+				{
+					xmag[i] = avg_mag[0];
+					ymag[i] = avg_mag[1];
+					//print out x and y mag values
+					printf("xmag = %.0f, ymag = %.0f\n", xmag[i], ymag[i]);
+					i++;
+					nSampleNum = 0;
+					if (i >= 1024) break;
+				}
+				fflush(stdout);
+			}
+		}
+		nKeyPressed = Util::getch_noblock();
+	}
+	printf("\n");
+	if (nKeyPressed == 99) {//c for calibrate, need to calibrate x and y mag offsets based on best available circle fit
+		double mag_offsets[3];
+		filedata magCalFile((char*)"./mag_cal.txt");
+		magCalFile.getDouble((char*)"[calibration]", (char*)"mag_offsets", 3, mag_offsets);
+		//save xmag, ymag data to text file for debugging purposes
+		std::ofstream *dataFile = new std::ofstream();
+		try {
+			dataFile->open("magcaldata.txt", std::ios_base::out | std::ios_base::out);//open file for appending
+		}
+		catch (const std::exception& e) {
+			printf("Error (%s) trying to open debug output file for writing.\n", e.what());
+			return false;
+		}
+		char lineText[128];
+		for (int j = 0; j < i; j++) {
+			sprintf(lineText, "%.3f, %.3f\n", xmag[j], ymag[j]);
+			dataFile->write(lineText, strlen(lineText));
+		}
+		dataFile->close();
+		delete dataFile;
+
+		GetBestCircleFit(xmag, ymag, i, mag_offsets[0], mag_offsets[1]);
+		if (!SaveMagOffsets(mag_offsets[0],
+			mag_offsets[1],
+			mag_offsets[2])) {//store magnetometer offsets to mag offset registers
+			pthread_mutex_unlock(m_i2c_mutex);
+			return false;
+		}
+		//save offsets to text calibration file
+		magCalFile.writeData((char*)"[calibration]", (char*)"mag_offsets", 3, mag_offsets);
+
+		printf("Calibration offsets: %.0f, %.0f, %.0f stored successfully.\n", mag_offsets[0], mag_offsets[1], mag_offsets[2]);
+	}
+	pthread_mutex_unlock(m_i2c_mutex);
+	return true;
+}
+
+void IMU::GetBestCircleFit(double* xmag, double* ymag, int nNumVals, double& magXOffset, double& magYOffset) {//tries to find the approximate center and radius of a circle where nNumVals points of coordinates xmag, ymag go through the circumference of the circle
+	//find center value of nNumVals of xmag, ymag values
+	//first find min and max values to help get estimate of center	
+	const int TRY_WIDTH = 200;//try this many points to left and right of center estimate to arrive at solution
+	double dXMin = 100000, dXMax = -1000000, dYMin = 1000000, dYMax = -100000;
+	for (int i = 0; i < nNumVals; i++) {
+		if (xmag[i] < dXMin) {
+			dXMin = xmag[i];
+		}
+		if (xmag[i] > dXMax) {
+			dXMax = xmag[i];
+		}
+		if (ymag[i] < dYMin) {
+			dYMin = ymag[i];
+		}
+		if (ymag[i] > dYMax) {
+			dYMax = ymag[i];
+		}
+	}
+	double dMinRadius = (dXMax - dXMin) / 4;
+	double dMaxRadius = dXMax - dXMin;
+	double dXCenter = (dXMin + dXMax) / 2;//estimate of x-center of circle
+	double dYCenter = (dYMin + dYMax) / 2;//estimate of y-center of circle
+	double dRadius = 0.0;
+	double dBestScore = 0.0;
+	for (double i = dXCenter - TRY_WIDTH; i <= dXCenter + TRY_WIDTH; i++) {
+		for (double j = dYCenter - TRY_WIDTH; j <= dYCenter + TRY_WIDTH; j++) {
+			double dRadiusDif = dMaxRadius - dMinRadius;
+			double dLowRad = dMinRadius;
+			double dHighRad = dMaxRadius;
+			double dMidRad = (dLowRad + dHighRad) / 2;
+			while (dRadiusDif > .2) {
+				double dLowScore = 0.0;
+				double dMidScore = 0.0;
+				double dHighScore = 0.0;
+				for (int k = 0; k < nNumVals; k++) {
+					dLowScore += fabs((xmag[k] - i) * (xmag[k] - i) + (ymag[k] - j) * (ymag[k] - j) - dLowRad * dLowRad);
+					dMidScore += fabs((xmag[k] - i) * (xmag[k] - i) + (ymag[k] - j) * (ymag[k] - j) - dMidRad * dMidRad);
+					dHighScore += fabs((xmag[k] - i) * (xmag[k] - i) + (ymag[k] - j) * (ymag[k] - j) - dHighRad * dHighRad);
+				}
+				if (dLowScore <= dHighScore) {
+					dHighRad = dMidRad;
+					if (dBestScore == 0.0 || dLowScore < dBestScore) {
+						dBestScore = dLowScore;
+						magXOffset = i;
+						magYOffset = j;
+					}
+				}
+				else {
+					dLowRad = dMidRad;
+					if (dBestScore == 0.0 || dHighScore < dBestScore) {
+						dBestScore = dHighScore;
+						magXOffset = i;
+						magYOffset = j;
+					}
+				}
+				dMidRad = (dLowRad + dHighRad)/2;
+				dRadiusDif = dHighRad - dLowRad;
+			}
+		}
+	}
 }

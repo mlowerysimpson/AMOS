@@ -25,6 +25,7 @@
 #include "TempSensor.h"
 #include "BatteryCharge.h"
 #include "NotifyOperator.h"
+#include "HelixDepth.h"
 #include "AToD.h"
 #include "PHSensor.h"
 #include "TurbiditySensor.h"
@@ -60,6 +61,7 @@ DiagnosticsSensor *g_shipdiagnostics;//interface for ship monitoring, power cont
 PHSensor *g_PHSensor;//interface object for pH probe
 TurbiditySensor *g_turbiditySensor;//interface object for turbidity sensor
 SwitchRelay *g_switchRelay;//interface object for controlling switch relay (eg. for switching solar input to charge controller on / off)
+HelixDepth* g_helixDepth;//interface for getting depth readings from Humminbird Helix fish finder
 Vision g_vision;//object used for taking pictures with camera(s)
 //TFMini m_miniLiDAR;//object used for getting distance measurements to objects using TFMini LiDAR
 LIDARLite *g_lidar;//object used for getting distance measurements to objects using LIDAR Lite
@@ -654,6 +656,10 @@ void Cleanup() {//remove any un-executed commands from the queue, do general cle
 		delete g_fileCommands;
 		g_fileCommands=nullptr;
 	}
+	if (g_helixDepth) {
+		delete g_helixDepth;
+		g_helixDepth = nullptr;
+	}
 	if (g_navigator) {
 		delete g_navigator;
 		g_navigator=nullptr;
@@ -748,6 +754,10 @@ void StartFileCommandsThread() {//start thread for executing commands from a tex
 void GetDataLoggingPreferences() {//get data logging preferences from prefs.txt file
 	char sMsg[128];
 	filedata prefsFile((char *)"prefs.txt");
+	//compass setting
+	double dDeclination = prefsFile.getDouble((char*)"[compass]", "declination");
+	g_navigator->SetDeclination(dDeclination);
+
 	g_bLogWaterTemp = (bool)prefsFile.getInteger((char *)"[sensors]",(char *)"watertemp");
 	g_bLogBoatTemp = (bool)prefsFile.getInteger((char *)"[sensors]",(char *)"boattemp");
 	g_bLogGPSData = (bool)prefsFile.getInteger((char *)"[sensors]",(char *)"gps");
@@ -849,6 +859,21 @@ void GetDataLoggingPreferences() {//get data logging preferences from prefs.txt 
 		sensorObjects[nNumSensors] = (void *)g_shipdiagnostics;
 		nNumSensors++;
 		g_sensorDataFile = new SensorDataFile(sensorTypes, nNumSensors, sensorObjects, (char *)"sensordata.txt", g_nLoggingIntervalSec);
+		//depth readings
+		bool bDepthReadings = (bool)prefsFile.getInteger((char*)"[sensors]", (char*)"depth");
+		if (bDepthReadings) {
+			char* szDepthSerport = NULL;
+			prefsFile.getString("[sensors]", "depth_port", &szDepthSerport);
+			if (szDepthSerport) {
+				char* szDepthFilename = NULL;
+				prefsFile.getString("[sensors]", "depth_filename", &szDepthFilename);
+				if (szDepthFilename) {
+					g_helixDepth = new HelixDepth(g_navigator, szDepthSerport, szDepthFilename);
+					delete[]szDepthFilename;
+				}
+				delete[]szDepthSerport;
+			}
+		}
 	}
 
 }
@@ -1017,6 +1042,10 @@ int main(int argc, const char * argv[]) {
 		bGotAccurateGPSData = true;//no need to wait for gps data if file commands do not contain any GPS waypoints
 	}
 	const int REQUIRED_NUM_SATELLITES = 4;//required number of GPS satellites for accurate position data
+	double* latBuf = new double[256];//store positions in buffer and compare them to previous values to make sure that position data has stabilized to within 20 m
+	double* longBuf = new double[256];
+	int nPosIndex = 0;
+	int nPosSamples = 0;
 	while (g_bKeepGoing&&!bGotAccurateGPSData) {
 		REMOTE_COMMAND *pRC = GetNextCommand();
 		if (pRC!=nullptr) {
@@ -1046,12 +1075,30 @@ int main(int argc, const char * argv[]) {
 			sprintf(sMsg,"pos = %.6f, %.6f, satellites visible = %d, satellites used = %d.\n",dLatitude,dLongitude,nNumSatellitesVisible,nNumSatellitesUsed);
 			g_shiplog.LogEntry(sMsg,true);
 			if (nNumSatellitesUsed>=REQUIRED_NUM_SATELLITES) {
-				bGotAccurateGPSData = true;
+				//add lat, long to buffer and if enough samples are present check to see if position has stabilized
+				latBuf[nPosIndex] = dLatitude;
+				longBuf[nPosIndex] = dLongitude;
+				nPosIndex = (nPosIndex + 1) % 256;
+				nPosSamples++;
+				if (nPosSamples >= 120) {//at least 2 minutes of position data
+					int nPrevIndex = nPosIndex - 120;
+					if (nPrevIndex < 0) {
+						nPrevIndex = nPrevIndex + 256;
+					}
+					double dDist = Navigation::ComputeDistBetweenPts(dLatitude, dLongitude, latBuf[nPrevIndex], longBuf[nPrevIndex]);
+					sprintf(sMsg, "distance has changed %.1f m over last 2 minutes.\n", dDist);
+					g_shiplog.LogEntry(sMsg, true);
+					if (dDist < 20) {
+						//changed less than 20 m over last 2 minutes, assume to be stable
+						bGotAccurateGPSData = true;
+					}
+				}
 			}
 		}
 		usleep(1000000);//pause for 1 second
 	}
-	
+	delete [] latBuf;
+	delete [] longBuf;
 
 	StartDataCollectionThread();//start thread for receiving sensor data
 	if (g_fileCommands!=nullptr) {

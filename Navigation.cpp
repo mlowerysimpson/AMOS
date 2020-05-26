@@ -255,6 +255,7 @@ bool Navigation::CollectCompassData(void *pShipLog) {//collects a sample of comp
 	}
 	//adjust compass data for magnetic declination
 	m_imuData.heading+=m_dMagDeclination;
+
 	if (m_imuData.heading>=360) {
 		m_imuData.heading-=360;
 	}
@@ -1908,4 +1909,8 @@ void Navigation::PrintOutPlannedPts() {//print out the planned waypoints and hea
 			}
 		}
 	}
+}
+
+void Navigation::SetDeclination(double dDeclination) {//set the magnetic declination for the current geographic locale
+	this->m_dMagDeclination = dDeclination;
 }

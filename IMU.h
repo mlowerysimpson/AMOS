@@ -108,6 +108,7 @@ public:
 	bool GetSample(IMU_DATASAMPLE *pIMUSample, int nNumToAvg);//collect magnetometer, accelerometer, and gyro data, and then call ComputeOrientation to determine orientation angles
 	void ResetAccGyro();//reset the timestamps for the acc/gyro measurements back to zero seconds
 	bool DoMagCal();//perform a calibration procedure on the magnetometers to get the zero-field offsets for each of the sensors. Saves the results to the offset registers.
+	bool DoXYMagCal();//perform a calibration procedure on the magnetometers to get the zero-field offsets for the X and Y magnetometers. Saves the results to the offset registers.
 	void ComputeOrientation(IMU_DATASAMPLE *pSample);//compute orientation (pitch, roll, and heading angles) of the AltIMU-10, using acc/mag data plus gyros
 
 		
@@ -123,6 +124,7 @@ private:
 	unsigned int m_uiAccGyroSampleCount;//the number of acc/gyro samples successfully collected
 	
 	//functions
+	void GetBestCircleFit(double *xmag, double *ymag, int nNumVals, double &magXOffset, double &magYOffset);//tries to find the approximate center and radius of a circle where nNumVals points of coordinates xmag, ymag go through the circumference of the circle
 	bool SaveMagOffsets(double dMagOffsetX, double dMagOffsetY, double dMagOffsetZ);//store magnetometer offsets to mag offsets registers
 	bool GetAvgMagVals(double mag_data[NUM_MAGCAL_AVG][3], double avg_mag[3], int nNumSamples);//get averaged magnetometer values from last NUM_MAGCAL_AVG samples stored in mag_data
 	void ReadMagOffsets();//read in and print out mag offsets stored in offset registers

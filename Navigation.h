@@ -61,6 +61,7 @@ public:
 	IMU_DATASAMPLE m_imuData;//structure for holding compass, inertial data
 	bool m_bExitNavFunction;//flag can be used to exit out of some navigation functions
 	//functions
+	void SetDeclination(double dDeclination);//set the magnetic declination for the current geographic locale
 	void PrintOutPlannedPts();//print out the planned waypoints and heading directions
 	static double ComputeDistBetweenPts(double dLatitudeDeg1, double dLongitudeDeg1, double dLatitudeDeg2, double dLongitudeDeg2);//use GPS locations of 2 points to get the distance between 2 points 
 	void ClearRoutePlan();//clears all of the planned waypoints from memory
