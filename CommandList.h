@@ -21,11 +21,18 @@
 #define CANCEL_OPERATION 22//cancel the operation currently in progress
 #define QUIT_PROGRAM 23//quit the currently running Pi program (RemoteControlTest) on AMOS
 #define ENTER_SLEEP 24//put AMOS into sleep mode for an optional length of time (or indefinitely). AMOS wakes up when time elapses or when a command to wakeup is received over the serial wireless link.
-#define LAST_COMMAND 24//the highest possible command #
+#define SCRIPT_STATUS_PACKET 25//used to request or send the current status of the file script currently running on AMOS
+#define SCRIPT_STEP_CHANGE 26//used to change the step of the currently running file script
+#define LIST_REMOTE_SCRIPTS 27//command sent to AMOS to return a list of all of the available remote scripts
+#define USE_REMOTE_SCRIPT 28//command sent to AMOS to use a particular remote script
+#define FILE_TRANSFER 29//transfer a particular file
+#define LAST_COMMAND 29//the highest possible command #
 
 #define PASSCODE_TEXT "AMOS2018"
 
 #define NUM_RESEND_SYNC_BYTES 10 //number of sync bytes to use before re-sending a large data chunk
+
+#define REMOTE_SCRIPT_NAMELENGTH 64 //number of bytes allocated to the name of the text script file running on the boat
 
 
 
@@ -39,6 +46,7 @@
 #define FC_GRID_SAMPLE 11 //command to take a bunch of sensor samples in a grid pattern, defined by GPS coordinates and # of samples in each direction
 #define FC_WAIT 12 //command to wait for a specified amount of time, if that time is >= MIN_SLEEP_TIME_SEC then put AMOS into a low power state
 #define FC_SAMPLE 13 //command to collect sample data (from all sensors configured in prefs.txt file) and save data to specified filename
+#define FC_PHOTO 14 //command to take a high-resolution photograph
 
 //structure used for indicating how many sensors the boat has and what types of sensors they are
 struct SENSOR_INFO {

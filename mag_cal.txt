@@ -1,0 +1,3 @@
+[calibration]
+mag_offsets 1524.6 -2786.4 5237.0
+

@@ -19,6 +19,7 @@
 #include <string.h>
 #include <pthread.h>
 #include "filedata.h"
+#include "RemoteCommand.h"
 #include "ShipLog.h"
 #include "FileCommands.h"
 #include "LeakSensor.h"
@@ -77,7 +78,6 @@ bool g_bLiDARAvoidanceMode;//flag is true if boat should alter its heading in or
 char g_rootFolder[PATH_MAX];//root folder where this program starts from
 vector <char *> g_commandLineParams;//command line parameters for this program
 unsigned int g_lastNetworkCommandTime;//last network command time (for controlling thrusters) in ms
-vector <REMOTE_COMMAND *> g_remoteCommands;//series of remote commands to execute in the order that they arrive
 char g_remote_ipaddr[32];//the remote IP address 
 bool g_bVoltageSwitchedOff;//true if the user has switched off battery power on AMOS (i.e. measured voltage has shifted from a high value to a low value)
 double g_dBatteryVoltage;//the voltage of the battery, should be >= 12 volts
@@ -140,26 +140,24 @@ void *serportFunction(void *pParam) {//function receives commands from base stat
 	sprintf(sMsg,"Listening for commands on port %s\n",szSerportName);
 	g_shiplog.LogEntry(sMsg,true);
 
-	RemoteCommand *pRC = new RemoteCommand(fd, g_navigator, g_thrusters, g_atod, g_sensorDataFile, &g_vision, &g_remoteCommandsMutex, (void *)&g_shiplog);
+	RemoteCommand *pRC = new RemoteCommand((char *)g_rootFolder, fd, g_navigator, g_thrusters, g_atod, g_sensorDataFile, &g_vision, &g_remoteCommandsMutex, (void *)&g_shiplog);
 	pRC->SetSerportMode(true);//set the RemoteCommand object to use serial port communications
 	while (g_bKeepGoing) {
 		REMOTE_COMMAND *pCommandReceived = pRC->GetCommand();
 		if (pCommandReceived)
 		{
-			if (pCommandReceived->nCommand == THRUST_ON || pCommandReceived->nCommand == THRUST_OFF)
+			if (pCommandReceived->nCommand == THRUST_ON || pCommandReceived->nCommand == THRUST_OFF||pCommandReceived->nCommand== SCRIPT_STATUS_PACKET||pCommandReceived->nCommand==SCRIPT_STEP_CHANGE||pCommandReceived->nCommand==FILE_TRANSFER)
 			{
 				g_lastNetworkCommandTime = millis();
 			}
-			//test
 			sprintf(sMsg,"Serial Command Received: %d\n",pCommandReceived->nCommand);
 			g_shiplog.LogEntry(sMsg,true);
-			//end test
 			pthread_mutex_lock(&g_remoteCommandsMutex);
-			g_remoteCommands.push_back(pCommandReceived);
 			pRC->ExecuteCommand(pCommandReceived, true);
 			if (pCommandReceived->nCommand==QUIT_PROGRAM) {
 				g_bKeepGoing=false;//remote command to quit program was received
 			}
+			RemoteCommand::DeleteCommand(pCommandReceived);
 			pthread_mutex_unlock(&g_remoteCommandsMutex);
 		}
 	}
@@ -221,13 +219,13 @@ void *clientNetFunction(void *pParam) {//function connects to the boat server an
 		setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof tv);
 
 		//keep trying to receive data on this socket until an error occurs
-		RemoteCommand *pRC = new RemoteCommand(sockfd,g_navigator,g_thrusters,g_atod,g_sensorDataFile,&g_vision,&g_remoteCommandsMutex,(void *)&g_shiplog);
+		RemoteCommand *pRC = new RemoteCommand((char *)g_rootFolder, sockfd,g_navigator,g_thrusters,g_atod,g_sensorDataFile,&g_vision,&g_remoteCommandsMutex,(void *)&g_shiplog);
 		int nErrorCount=0;
 		while (g_bKeepGoing) {
 			REMOTE_COMMAND *pCommandReceived = pRC->GetCommand();
 			if (pCommandReceived) {
 				nErrorCount=0;
-				if (pCommandReceived->nCommand==THRUST_ON||pCommandReceived->nCommand==THRUST_OFF) {
+				if (pCommandReceived->nCommand==THRUST_ON||pCommandReceived->nCommand==THRUST_OFF || pCommandReceived->nCommand == SCRIPT_STATUS_PACKET || pCommandReceived->nCommand == SCRIPT_STEP_CHANGE) {
 					g_lastNetworkCommandTime=millis();
 				}
 				//test
@@ -235,11 +233,11 @@ void *clientNetFunction(void *pParam) {//function connects to the boat server an
 				g_shiplog.LogEntry(sMsg,true);
 				//end test
 				pthread_mutex_lock(&g_remoteCommandsMutex);
-				g_remoteCommands.push_back(pCommandReceived);
 				pRC->ExecuteCommand(pCommandReceived, false);
 				if (pCommandReceived->nCommand==QUIT_PROGRAM) {
 					g_bKeepGoing=false;//remote command to quit program was received
 				}
+				RemoteCommand::DeleteCommand(pCommandReceived);
 				pthread_mutex_unlock(&g_remoteCommandsMutex);
 			}
 			else {//some error occurred trying to get data, so look for new connection
@@ -601,7 +599,6 @@ void ExecuteCommand(REMOTE_COMMAND *pCommand) {//executes the remote command nCo
 }
 
 void Cleanup() {//remove any un-executed commands from the queue, do general cleanup of memory, and cancel any running threads
-	int nNumCommands = g_remoteCommands.size();
 	//pause for a bit to allow network client thread to exit cleanly, so that socket connection (if any) gets properly closed
 	unsigned int uiTimeoutTime = millis() + 30000;//allow up to 30 seconds for threads to exit cleanly
 	while (millis()<uiTimeoutTime&&(g_bNetClientThreadRunning||g_bSerportThreadRunning||g_bGPSThreadRunning||g_bSensorThreadRunning)) {
@@ -620,12 +617,6 @@ void Cleanup() {//remove any un-executed commands from the queue, do general cle
 		}
 		if (g_bSensorThreadRunning&&!g_bEnteringSleepMode) {
 			printf("Sensor thread did not exit cleanly.\n");
-		}
-	}
-	for (int i=0;i<nNumCommands;i++) {
-		if (g_remoteCommands[i]!=nullptr) {
-			delete g_remoteCommands[i];
-			g_remoteCommands[i]=nullptr;
 		}
 	}
 	if (g_sensorDataFile) {
@@ -688,19 +679,6 @@ void Cleanup() {//remove any un-executed commands from the queue, do general cle
 		delete g_shipdiagnostics;
 		g_shipdiagnostics = nullptr;
 	}
-}
-
-REMOTE_COMMAND * GetNextCommand() {//gets the next available remote command (returns nullptr if no command is available) and removes that command from the list of commands
-	int nNumCommandsInQueue = g_remoteCommands.size();
-	if (nNumCommandsInQueue<=0) {
-		return nullptr;
-	}
-	pthread_mutex_lock(&g_remoteCommandsMutex);
-	vector<REMOTE_COMMAND *>::iterator it = g_remoteCommands.begin();
-	REMOTE_COMMAND *pNextCommand = g_remoteCommands[0];
-	g_remoteCommands.erase(it);
-	pthread_mutex_unlock(&g_remoteCommandsMutex);
-	return pNextCommand;
 }
 
 void StartNetworkClientThread(char *remoteIPAddr) {//start thread to open client that connects to the boat server
@@ -942,7 +920,6 @@ int main(int argc, const char * argv[]) {
 	g_networkThreadId = 0;
 	g_serportThreadId = 0;
 	g_fileCommands=nullptr;
-	//g_remoteCommandsMutex = PTHREAD_MUTEX_INITIALIZER;
 	pthread_mutexattr_init(&g_remoteCommandsMutexAttr);
 	pthread_mutexattr_settype(&g_remoteCommandsMutexAttr, PTHREAD_MUTEX_RECURSIVE);
 	pthread_mutex_init(&g_remoteCommandsMutex, &g_remoteCommandsMutexAttr);
@@ -1047,12 +1024,6 @@ int main(int argc, const char * argv[]) {
 	int nPosIndex = 0;
 	int nPosSamples = 0;
 	while (g_bKeepGoing&&!bGotAccurateGPSData) {
-		REMOTE_COMMAND *pRC = GetNextCommand();
-		if (pRC!=nullptr) {
-			ExecuteCommand(pRC);
-			RemoteCommand::DeleteCommand(pRC);//finished with command now, so delete it
-		}
-		//if (_kbhit()) {
 		int nKeyboardChar = Util::getch_noblock();
 		bool bUserQuit = false;
 		if (nKeyboardChar>0) {
@@ -1112,11 +1083,6 @@ int main(int argc, const char * argv[]) {
 	//loop receiving commands until ESC key is pressed
 	
 	while (g_bKeepGoing) {
-		REMOTE_COMMAND *pRC = GetNextCommand();
-		if (pRC!=nullptr) {
-			ExecuteCommand(pRC);
-			RemoteCommand::DeleteCommand(pRC);//finished with command now, so delete it
-		}
 		//if (_kbhit()) {
 		bool bUserQuit = false;
 		int nKeyboardChar = Util::getch_noblock();

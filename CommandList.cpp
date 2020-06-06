@@ -1,4 +1,5 @@
 //comment out the next line for non-Windows builds, or include a dummy stdafx.h file
+#include "pch.h"
 #include "stdafx.h"
 #include "CommandList.h"
 #include "IMU.h"
@@ -98,6 +99,24 @@ BOAT_DATA * BoatCommand::CreateBoatData(int nDataType) {//create an empty BOAT_D
 	else if (nDataType==DIAGNOSTICS_DATA_PACKET) {
 		pAMOSData->nPacketType = DIAGNOSTICS_DATA_PACKET;
 		pAMOSData->nDataSize = 7*sizeof(float) + sizeof(int);
+		pAMOSData->dataBytes = new unsigned char[pAMOSData->nDataSize];
+		pAMOSData->checkSum = CalculateChecksum(pAMOSData);//checksum needs to be recalculated
+	}
+	else if (nDataType == SCRIPT_STATUS_PACKET) {
+		pAMOSData->nPacketType = SCRIPT_STATUS_PACKET;
+		pAMOSData->nDataSize = REMOTE_SCRIPT_NAMELENGTH + 2 * sizeof(int);
+		pAMOSData->dataBytes = new unsigned char[pAMOSData->nDataSize];
+		pAMOSData->checkSum = CalculateChecksum(pAMOSData);//checksum needs to be recalculated
+	}
+	else if (nDataType == LIST_REMOTE_SCRIPTS) {
+		pAMOSData->nPacketType = LIST_REMOTE_SCRIPTS;
+		pAMOSData->nDataSize = sizeof(int);
+		pAMOSData->dataBytes = new unsigned char[pAMOSData->nDataSize];
+		pAMOSData->checkSum = CalculateChecksum(pAMOSData);//checksum needs to be recalculated
+	}
+	else if (nDataType == FILE_TRANSFER) {
+		pAMOSData->nPacketType = FILE_TRANSFER;
+		pAMOSData->nDataSize = sizeof(int);
 		pAMOSData->dataBytes = new unsigned char[pAMOSData->nDataSize];
 		pAMOSData->checkSum = CalculateChecksum(pAMOSData);//checksum needs to be recalculated
 	}
@@ -248,13 +267,6 @@ bool BoatCommand::SendLargeSerialData(int nSocket, unsigned char *outputBuf, int
 			printf("sending last chunk: %d bytes\n",nNumInChunk);	
 		}
 		//end test
-		/*for (int i=0;i<nNumInChunk;i++) {
-			//test
-			//printf("outputBuf[%d] = %d\n",nNumSent+i,(int)outputBuf[nNumSent+i]);
-			//end test
-			serialPutchar(nSocket, chunkBuf[i]);
-			//delay(1);
-		}*/
 		if (write(nSocket,chunkBuf,nNumInChunk)!=nNumInChunk) {
 			printf("serial write error\n");
 		}
@@ -315,7 +327,65 @@ bool BoatCommand::SendLargeSerialData(int nSocket, unsigned char *outputBuf, int
 			}
 		}
 		//send signal to indicate that program is still running
-		pDiag->ActivityPulse();
+		if (pDiag!=nullptr) {
+			pDiag->ActivityPulse();
+		}
+	}
+#else 
+	//windows implementation
+	unsigned char inBuf[4];
+	while (nNumRemaining > 0 && nNumFailures < MAX_NUM_FAILURES) {
+		int nNumInChunk = fillchunk(chunkBuf, nChunkIndex, outputBuf, nNumToSend, nNumSent, CHUNK_SIZE);
+		DWORD dwNumWritten = 0;
+		WriteFile((HANDLE)nSocket, chunkBuf, (DWORD)nNumInChunk, &dwNumWritten, NULL);
+		if (((int)dwNumWritten) != nNumInChunk) {
+			TRACE("serial write error\n");
+			return false;
+		}
+		//now wait for response (should get 4 bytes back indicating successful reception or an error)
+		HANDLE hPort = (HANDLE)nSocket;
+		DWORD dwNumRead = 0;
+		ReadFile(hPort, inBuf, 4, &dwNumRead, NULL);
+		bool bError = false;
+		bool bCancel = false;
+		if (dwNumRead < 4) {
+			bError = true;
+			TRACE("Timeout waiting for response, %u bytes received.\n", dwNumRead);
+		}
+		else {
+			TRACE("bytes received: %d, %d, %d, %d\n", (int)inBuf[0], (int)inBuf[1], (int)inBuf[2], (int)inBuf[3]);
+			if (inBuf[0] == 0xff || inBuf[1] == 0xff) {
+				//error occurred
+				bError = true;
+			}
+			else if (inBuf[0] == 0xaa || inBuf[1] == 0xaa) {
+				bCancel = true;
+				//test
+				TRACE("command to stop stending stuff.\n");
+				//end test
+				return false;
+			}
+			else if (inBuf[2] != (chunkBuf[nNumInChunk - 2])) {
+				bError = true;
+				TRACE("1st returned checksum byte is wrong.\n");
+			}
+			else if (inBuf[3] != (chunkBuf[nNumInChunk - 1])) {
+				bError = true;
+				TRACE("2nd returned checksum byte is wrong.\n");
+			}
+		}
+		if (!bError) {
+			nNumFailures = 0;
+			nNumSent += (nNumInChunk - 11);
+			nNumRemaining -= (nNumInChunk - 11);
+			nChunkIndex++;
+		}
+		else {//some problem occurred getting confirmation
+			nNumFailures++;
+			if (nNumFailures >= MAX_NUM_FAILURES) {
+				return false;
+			}
+		}
 	}
 #endif
 	return (nNumFailures<MAX_NUM_FAILURES);
@@ -345,7 +415,7 @@ int BoatCommand::fillchunk(unsigned char *chunkBuf,int nChunkID,unsigned char *i
 	//chunkBuf[6] = <chunk index, least sig byte>
 	chunkBuf[6] = (unsigned char)(nChunkID&0x000000ff);
 	//test
-	printf("nChunkID = %d, chunkBuf[5] = %d, chunkBuf[6] = %d\n",nChunkID, (int)chunkBuf[5],(int)chunkBuf[6]);
+	//printf("nChunkID = %d, chunkBuf[5] = %d, chunkBuf[6] = %d\n",nChunkID, (int)chunkBuf[5],(int)chunkBuf[6]);
 	//end ntest
 	nMaxChunkSize-=11;//subtract 9 bytes for pre-amble stuff and 2 bytes for CRC bytes
 	int nDataPortionSize = min((nBufSize-nBufIndex),nMaxChunkSize);
@@ -368,7 +438,7 @@ int BoatCommand::fillchunk(unsigned char *chunkBuf,int nChunkID,unsigned char *i
 	//chunkBuf[10+#data bytes] = <CRC, least sig byte>
 	chunkBuf[10+nDataPortionSize] = (unsigned char)(nChecksum&0x000000ff);
 	//test
-	printf("chunkBuf[%d] = %d\n",10+nDataPortionSize,(int)chunkBuf[10+nDataPortionSize]);
+	//printf("chunkBuf[%d] = %d\n",10+nDataPortionSize,(int)chunkBuf[10+nDataPortionSize]);
 	//end test
 	return 11 + nDataPortionSize;
 }

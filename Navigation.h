@@ -1,5 +1,6 @@
 //Navigation.h
 //Code for obtaining navigation data, plotting a course, navigating around obstacles, etc.
+#pragma once
 #include "CommandList.h"
 #include "IMU.h"
 #include <iostream>

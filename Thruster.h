@@ -1,3 +1,4 @@
+#pragma once
 #include <wiringPi.h>
 #include "AirProp.h"
 #include "Rudder.h"

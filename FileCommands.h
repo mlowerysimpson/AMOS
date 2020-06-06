@@ -1,8 +1,10 @@
 //FileCommands.h
+#pragma once
 #include <stdlib.h>
 #include <vector>
 #include <pthread.h>
-#include "RemoteCommand.h"
+#include "Navigation.h"
+#include "Thruster.h"
 #include "SensorDataFile.h"
 #include "BatteryCharge.h"
 #include "LIDARLite.h"
@@ -11,6 +13,7 @@ class FileCommands {
 public:
 	FileCommands(char *rootFolder, char *szFilename, Navigation *pNavigator, Thruster *pThrusters, SensorDataFile *pSensorDataFile, LIDARLite *pLidar, bool *bCancel);//constructor takes path of commands filename as input
 	~FileCommands();//destructor
+	bool m_bExecutingFileCommand;//true if a file command is currently being executed (by the DoCommand function)
 	bool m_bFileOK;//true if the file could be successfully found, opened, and parsed
 	bool m_bSleepTime;//true if it is time to put AMOS into sleep mode
 	bool m_bTravelToSunnySpot;//flag may be set to true shortly after program startup, if it is necessary for the boat to first travel to the nearest sunny location for re-charging, prior to executing any of its required commands.
@@ -20,14 +23,21 @@ public:
 	REMOTE_COMMAND *GetCommand(int nCommandIndex);//get the command at index nCommandIndex	
 	double GetSleepTimeHrs();//get length of time in hours that sleep will last
 	void PrintOutCommandList();//test function for printing out list of commands
+	bool ChangeToFile(char *szScriptName);//change to a new file script
 	int DoNextCommand(pthread_mutex_t *command_mutex, unsigned int *lastNetworkCommandTimeMS, void *pShipLog);//execute the next command in the list of file commands
 	static bool doesFileExist(char *szFilename);//return true if the file exists
 	static bool HasGPSWaypoints(FileCommands *pFileCommands);//return true if the pFileCommands object has one or more GPS waypoints associated with it (i.e. one or more "hold" or "waypoint" entries)
+	static bool SendRemoteScriptInfo(FileCommands *pFileCommandsObj, int nSocket, bool bUseSerial);//send info about the current file script (if any) that is running
+	static bool ListRemoteScriptsAvailable(char *szRootFolder, int nSocket, bool bUseSerial);//return a list of all of the file scripts available in the root program folder
+	static bool isValidScriptFile(char* szFilename);//return true if szFilename is a path to an AMOS script file
 	void ContinueFromPrevious();//continue at the last known stage of the file command sequence (i.e. from previous program instance, useful for example in picking up where you left off if AMOS goes into sleep mode for a while to charge up its battery)
 	void SetStepToClosestGPSWaypoint();//necessary to do this in case AMOS drifted a long distance while sleeping
 	void IncrementAndSaveCommandIndex();//increment the file command index and save index to prefs.txt file
 	void TravelToSunnySpot(double dLowVoltage, BatteryCharge *pBatteryCharge);//call this function shortly after program startup to insert a command to travel to a sunny location so that proper solar charging can occur	
 	int GetNumCommands();//return the number of commands associated with this FileCommands object
+	int GetCurrentCommandIndex();//return the index of the currently executing command
+	char* GetScriptName();//gets just the filename part (not the full path) of the script that is presently loaded (calling function is responsible for deleting the returned pointer)
+	void ChangeCurrentStep(int nStepChange);//change the index of the currently running script step
 
 private:
 	//functions

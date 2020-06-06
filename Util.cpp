@@ -174,3 +174,31 @@ void Util::HeadingToVec(double dHeadingDeg,double heading_vec[]) {
 	heading_vec[0] = sin(dHeadingDeg*dPI/180);
 	heading_vec[1] = cos(dHeadingDeg*dPI/180);
 }
+
+/**
+ * @brief gets a filename from a full path (calling function is responsible for deleting the returned pointer)
+ *
+ * @param szFullPath the full path to a file
+ * @return a char pointer to just the name portion of the path. The calling function is responsible for deleting the returned pointer when finished with it.
+ */
+char* Util::GetNameFromPath(char* szFullPath) {
+	if (szFullPath == nullptr) {
+		return nullptr;
+	}
+	int nMaxLength = strlen(szFullPath);
+	char* retVal = new char[nMaxLength + 1];
+	memset(retVal, 0, nMaxLength + 1);
+	int nLastSlashIndex = nMaxLength - 1;
+	while (nLastSlashIndex >= 0 && szFullPath[nLastSlashIndex] != '/') {
+		nLastSlashIndex--;
+	}
+	if (nLastSlashIndex >= 0) {
+		for (int i = nLastSlashIndex + 1; i < nMaxLength; i++) {
+			retVal[i - nLastSlashIndex - 1] = szFullPath[i];
+		}
+	}
+	else {
+		strcpy(retVal, szFullPath);
+	}
+	return retVal;
+}

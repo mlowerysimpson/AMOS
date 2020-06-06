@@ -1,9 +1,11 @@
 //FileCommands.cpp
 #include "FileCommands.h"
+#include "RemoteCommand.h"
 #include "ShipLog.h"
 #include "filedata.h"
 #include "Util.h"
 #include "SensorDeploy.h"
+#include <dirent.h>
 #include <sys/stat.h>
 #include <fstream>
 #include <algorithm>
@@ -21,6 +23,7 @@
 FileCommands::FileCommands(char *szRootFolder, char *szFilename, Navigation *pNavigator, Thruster *pThrusters, SensorDataFile *pSensorDataFile, LIDARLite *pLidar, bool *bCancel) {//constructor, takes the file path of a commands file as argument
 	m_szRootFolder = szRootFolder;//the folder where the prefs.txt (preferences) file is located 
 	m_bCancel = bCancel;
+	m_bExecutingFileCommand = false;
 	m_pBatteryCharge = nullptr;
 	m_pSensorDataFile = pSensorDataFile;
 	m_pLiDAR = pLidar;
@@ -709,7 +712,9 @@ int FileCommands::DoNextCommand(pthread_mutex_t *command_mutex, unsigned int *la
  */
 int FileCommands::DoCommand(REMOTE_COMMAND *pCommand, pthread_mutex_t *command_mutex, 
 							 unsigned int *lastNetworkCommandTimeMS, void *pShipLog) {
+	m_bExecutingFileCommand = true;
 	if (pCommand->nCommand==FC_LABEL) {//just a label, no need to do anything
+		m_bExecutingFileCommand = false;
 		return 0;
 	}
 	else if (pCommand->nCommand==FC_GOTO) {//need to jump command execution to a particular label
@@ -717,6 +722,7 @@ int FileCommands::DoCommand(REMOTE_COMMAND *pCommand, pthread_mutex_t *command_m
 		if (nMatchingLabelIndex>=0) {
 			m_nCurrentCommandIndex=nMatchingLabelIndex;
 		}
+		m_bExecutingFileCommand = false;
 		return 0;
 	}
 	else if (pCommand->nCommand==FC_HEADING) {
@@ -784,9 +790,9 @@ int FileCommands::DoCommand(REMOTE_COMMAND *pCommand, pthread_mutex_t *command_m
 				m_pThrusters->Stop();
 				//pause for SENSOR_GRID_PAUSETIME_SEC seconds with thrusters off
 				unsigned int uiEndPauseTime = millis() + 1000*SENSOR_GRID_PAUSETIME_SEC;
-				SensorDeploy s(this->m_szRootFolder,false);
-				s.Deploy();
-				usleep(10000000);//wait ten seconds for sensors to stabilize in water
+				//SensorDeploy s(this->m_szRootFolder,false);
+				//s.Deploy();
+				usleep(5000000);//wait five seconds for sensors to stabilize in water
 				for (int k=0;k<nNumSamplesPerLocation;k++) {
 					while (millis()<uiEndPauseTime) {
 						usleep(1000000);//sleep for a second
@@ -796,17 +802,17 @@ int FileCommands::DoCommand(REMOTE_COMMAND *pCommand, pthread_mutex_t *command_m
 					double dCurrentLongitude = m_pNavigator->GetLongitude();
 					m_pSensorDataFile->SaveDataAtLocation(dCurrentLatitude, dCurrentLongitude);
 				}
-				s.Retract();
+				//s.Retract();
 			}
 		}
 	}
 	else if (pCommand->nCommand==FC_SAMPLE) {
-		SensorDeploy s(this->m_szRootFolder,false);
-		m_pSensorDataFile->SetFilename((char *)pCommand->pDataBytes);
-		s.Deploy();
-		usleep(10000000);//wait ten seconds for sensors to stabilize in water
-		m_pSensorDataFile->CollectAndSaveDataNow();
-		s.Retract();
+		//SensorDeploy s(this->m_szRootFolder,false);
+		//m_pSensorDataFile->SetFilename((char *)pCommand->pDataBytes);
+		//s.Deploy();
+		usleep(5000000);//wait five seconds for sensors to stabilize in water
+		//m_pSensorDataFile->CollectAndSaveDataNow();
+		//s.Retract();
 	}
 	else if (pCommand->nCommand==FC_WAIT) {
 		int nIntervalHrs = (int)pCommand->pDataBytes[0];//number of hours in wait interval
@@ -817,8 +823,10 @@ int FileCommands::DoCommand(REMOTE_COMMAND *pCommand, pthread_mutex_t *command_m
 		time(&timeNow);
 		time_t nextIntervalTime = Util::GetNextIntervalTime(nTotalIntervalSec);
 		this->m_nWaitTimeSeconds = (int)(nextIntervalTime - timeNow);
+		m_bExecutingFileCommand = false;
 		return FC_WAIT;
 	}
+	m_bExecutingFileCommand = false;
 	return 0;
 }
 
@@ -1144,3 +1152,282 @@ void FileCommands::SetRoutePlan() {
 	}
 }
 
+/**
+ * @brief send info about the current file script (if any) that is running
+ *
+ * @param pFileCommandsObj pointer to the FileCommands object that is currently being used on AMOS, could be nullptr if no file commands are presently being used
+ * @param nSocket the socket ID for a serial port or network connection
+ * @param bUseSerial set to true if using a serial port connection or false if using a network connection
+ * @return true if the script status info could be succesfully sent, otherwise returns false if there is a problem.
+ */
+bool FileCommands::SendRemoteScriptInfo(FileCommands* pFileCommandsObj, int nSocket, bool bUseSerial) {
+	char scriptPortion[REMOTE_SCRIPT_NAMELENGTH];
+	//test
+	printf("sending remote script info.\n");
+	//end test
+	memset(scriptPortion, 0, REMOTE_SCRIPT_NAMELENGTH);
+	int nCurrentStep = 0;
+	int nNumSteps = 0;
+	
+	BOAT_DATA* pBoatData = BoatCommand::CreateBoatData(SCRIPT_STATUS_PACKET);
+	
+	if (pFileCommandsObj!=nullptr) {
+		char* scriptName = pFileCommandsObj->GetScriptName();
+		if (scriptName != nullptr) {
+			int nNumToCopy = strlen(scriptName);
+			if (nNumToCopy > REMOTE_SCRIPT_NAMELENGTH) {
+				nNumToCopy = REMOTE_SCRIPT_NAMELENGTH;
+			}
+			strncpy((char*)scriptPortion, scriptName, nNumToCopy);
+			nNumSteps = pFileCommandsObj->GetNumCommands();
+			if (nNumSteps > 0) {
+				nCurrentStep = pFileCommandsObj->GetCurrentCommandIndex() + 1;
+			}
+		}
+	}
+	memcpy(pBoatData->dataBytes, scriptPortion, REMOTE_SCRIPT_NAMELENGTH);
+	memcpy(&pBoatData->dataBytes[REMOTE_SCRIPT_NAMELENGTH], &nCurrentStep, sizeof(int));
+	memcpy(&pBoatData->dataBytes[REMOTE_SCRIPT_NAMELENGTH + sizeof(int)], &nNumSteps, sizeof(int));
+	pBoatData->checkSum = BoatCommand::CalculateChecksum(pBoatData);//calculate simple 8-bit checksum for BOAT_DATA structure
+	return BoatCommand::SendBoatData(nSocket, bUseSerial, pBoatData, nullptr);
+}
+
+/**
+ * @brief gets just the filename part (not the full path) of the script that is presently loaded (calling function is responsible for deleting the returned pointer)
+ *
+ * @return a pointer to the name of the script that is currently running (just the name part, not the full path). The calling function is responsible for deleting the returned pointer.
+ */
+char* FileCommands::GetScriptName() {
+	char* namePortion = Util::GetNameFromPath(m_szFilename);
+	return namePortion;
+}
+
+/**
+ * @brief gets the zero-based index of the currently executing command
+ *
+ * @return the zero-based index of the currently executing command
+ */
+int FileCommands::GetCurrentCommandIndex() {//return the index of the currently executing command
+	return m_nCurrentCommandIndex;
+}
+
+/**
+ * @brief change the index of the currently running script step
+ *
+ * @param nStepChange an integer value that corresponds to how many steps up (positive) or down (negative) the current step index should change.
+ * @return void
+ */
+void FileCommands::ChangeCurrentStep(int nStepChange) {//change the index of the currently running script step
+	int nCurrentCommandIndex = GetCurrentCommandIndex();
+	int nNumCommandSteps = GetNumCommands();
+	int nNewStepIndex = nCurrentCommandIndex + nStepChange;
+	
+	if (nNewStepIndex >= (nNumCommandSteps - 1)) {
+		nNewStepIndex = nNumCommandSteps - 1;
+	}
+	else if (nNewStepIndex <= 0) {
+		nNewStepIndex = 0;
+	}
+	if (nCurrentCommandIndex >= (nNumCommandSteps - 1)) {
+		if (nStepChange >= 0) {
+			return;//already at the last step, do nothing
+		}
+	}
+	else if (nCurrentCommandIndex <= 0 && nStepChange <= 0) {
+		return;//do nothing, already at the first step
+	}
+	
+	if (m_bExecutingFileCommand) {
+		m_nCurrentCommandIndex = nNewStepIndex - 1;//change the current command index (need to decrement also, since it it automatically incremented after each command is executed or canceled, and we still need to cancel the currently executing command
+		int nStartIndex = m_nCurrentCommandIndex;
+		//cancel the currently executing command
+		*m_bCancel = true;
+		unsigned int uiTimeoutTime = millis() + 5000;//timeout after this length of time if the currently executing file commands thread cannot be canceled 
+		while (millis() < uiTimeoutTime && m_nCurrentCommandIndex == nStartIndex) {
+			usleep(100000);//sleep for 100 ms
+		}
+		*m_bCancel = false;
+	}
+	else {
+		m_nCurrentCommandIndex = nNewStepIndex;//not currently executing a command at the moment, so change the current command index to the new index directly
+	}
+}
+
+/**
+*@brief send a list of all of the file scripts available in the root program folder
+*
+* @param szRootFolder pointer to the root program folder where the main program is stored and run from 
+* @param nSocket the socket ID for a serial port or network connection
+* @param bUseSerial set to true if using a serial port connection or false if using a network connection
+* @return true if the available script files could be succesfully sent, otherwise returns false if there was a problem.
+*/
+bool FileCommands::ListRemoteScriptsAvailable(char* szRootFolder, int nSocket, bool bUseSerial) {//send a list of all of the file scripts available in the root program folder
+	DIR* dir;
+	struct dirent* ent;
+	char sExt[8];//used for checking the file extension of each file
+	vector <char*>validScriptFiles;
+	memset(sExt, 0, 8);
+	if ((dir = opendir(szRootFolder)) != NULL) {
+		/* check all the txt files within szRootFolder to see if they are valid script command files */
+		while ((ent = readdir(dir)) != NULL) {
+			char* szFilename = ent->d_name;
+			int nFilenamelength = strlen(szFilename);
+			strcpy(sExt, (char*)&szFilename[nFilenamelength - 4]);
+			if (strcmp(sExt, (char*)".txt") == 0 || strcmp(sExt, (char*)".TXT") == 0) {
+				//text file
+				char* szFullpathname = new char[strlen(szRootFolder) + 2 + strlen(szFilename)];
+				sprintf(szFullpathname, "%s/%s", szRootFolder, szFilename);
+				if (isValidScriptFile(szFullpathname)) {
+					validScriptFiles.push_back(szFilename);
+				}
+				delete[]szFullpathname;
+			}
+		}
+		closedir(dir);
+	}
+	else {
+		/* could not open directory */
+		perror("");
+		return false;
+	}
+	int nNumScriptFiles = validScriptFiles.size();
+	int nNumBytesToSend = 0;
+	for (int i = 0; i < nNumScriptFiles; i++) {
+		nNumBytesToSend += (strlen(validScriptFiles[i]) + 1);
+	}
+	char* szBytesToSend = new char[nNumBytesToSend];//bytes to send over network or serial connection
+	int j = 0;
+	for (int i = 0; i < nNumScriptFiles; i++) {
+		int nFilenameSize = strlen(validScriptFiles[i]);
+		memcpy(&szBytesToSend[j], validScriptFiles[i], nFilenameSize);
+		j += nFilenameSize;
+		szBytesToSend[j] = '\n';//terminate each filename with '\n'
+		j++;
+	}
+	
+	//create and send BOAT_DATA structure for sending the file names
+	BOAT_DATA* pBoatData = BoatCommand::CreateBoatData(LIST_REMOTE_SCRIPTS);
+	memcpy(pBoatData->dataBytes, &nNumBytesToSend, sizeof(int));
+	pBoatData->checkSum = BoatCommand::CalculateChecksum(pBoatData);//calculate simple 8-bit checksum for BOAT_DATA structure
+	if (!BoatCommand::SendBoatData(nSocket, bUseSerial, pBoatData, nullptr)) {
+		delete pBoatData;
+		delete[] szBytesToSend;
+		return false;
+	}
+	//also send out bytes listing script filenames
+	if (bUseSerial) {//using serial port link
+		if (!BoatCommand::SendLargeSerialData(nSocket, (unsigned char *)szBytesToSend, nNumBytesToSend, nullptr)) {//send large amount of data out serial port, need to get confirmation after sending each chunk
+			delete pBoatData;
+			delete[] szBytesToSend;
+			return false;
+		}
+	}
+	else {//using network link
+		if (send(nSocket, szBytesToSend, nNumBytesToSend, 0) < 0) {
+			//error sending data
+			delete pBoatData;
+			delete[] szBytesToSend;
+			return false;
+		}
+	}
+	delete pBoatData;
+	delete[]szBytesToSend;
+	return true;
+}
+
+/**
+*@brief return true if szFilename is a path to an AMOS script file
+*
+* @param szFilename the full path to a text file 
+* @return true if szFilename is a path to an AMOS script file
+*/
+bool FileCommands::isValidScriptFile(char* szFilename) {//return true if szFilename is a path to an AMOS script file
+	char *s1 = "//boat commands script";
+	char* s2 = "label:";
+	char* s3 = "waypoint:";
+	char* s4 = "sample:";
+	char* s5 = "heading:";
+	char* s6 = "forward:";
+	int nLen1 = strlen(s1);
+	int nLen2 = strlen(s2);
+	int nLen3 = strlen(s3);
+	int nLen4 = strlen(s4);
+	int nLen5 = strlen(s5);
+	int nLen6 = strlen(s6);
+
+
+	FILE* txtFile = fopen(szFilename, "r");//open in read-only mode
+	if (!txtFile) {
+		return false;
+	}
+	char inBuf[1024];
+	int nNumRead = fread(inBuf, 1, 1024, txtFile);//just read in up to 1k of text
+	bool bRetval = false;
+	for (int i = 0; i < nNumRead; i++) {
+		if (strncmp(s1, &inBuf[i],nLen1) == 0) {
+			bRetval = true;
+			break;
+		}
+		if (strncmp(s2, &inBuf[i],nLen2) == 0) {
+			bRetval = true;
+			break;
+		}
+		if (strncmp(s3, &inBuf[i],nLen3) == 0) {
+			bRetval = true;
+			break;
+		}
+		if (strncmp(s4, &inBuf[i],nLen4) == 0) {
+			bRetval = true;
+			break;
+		}
+		if (strncmp(s5, &inBuf[i],nLen5) == 0) {
+			bRetval = true;
+			break;
+		}
+		if (strncmp(s6, &inBuf[i],nLen6) == 0) {
+			bRetval = true;
+			break;
+		}
+	}
+	fclose(txtFile);
+	return bRetval;
+}
+
+/**
+* @brief change to a new file script
+*
+* @param szScriptName the name of the text file with AMOS file commands
+* @return true if the script file was changed successfully, otherwise return false
+*/
+bool FileCommands::ChangeToFile(char* szScriptName) {//change to a new file script
+	*m_bCancel = true;//cancel out of any routines that are currently running
+	unsigned int uiTimeoutTime = millis() + 2000;//timeout after 2 seconds
+	while (millis() < uiTimeoutTime && m_bExecutingFileCommand) {
+		usleep(100000);//pause for 100 ms
+	}
+	*m_bCancel = false;
+	m_bExecutingFileCommand = false;
+	m_bFileOK = false;
+	m_bRestTimeMode = false;
+	m_bTimeChecking = false;
+	m_bSleepTime = false;
+	m_bTravelToSunnySpot = false;
+	m_bTraveledToSunnySpot = false;
+	if (m_szFilename != nullptr) {
+		delete[] m_szFilename;
+	}
+	m_szFilename = nullptr;
+	m_nWaitTimeSeconds = 0;
+
+	if (doesFileExist(szScriptName)) {
+		int nFilenameLength = strlen(szScriptName);
+		m_szFilename = new char[nFilenameLength + 1];
+		strcpy(m_szFilename, szScriptName);
+		m_bFileOK = readInFile();
+	}
+	m_fLastHeadingCommandAngle = 0;
+	m_nCurrentCommandIndex = 0;
+	SetRoutePlan();
+	CheckTime();
+	return m_bFileOK;
+}
