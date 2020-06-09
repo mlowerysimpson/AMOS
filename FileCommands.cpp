@@ -808,10 +808,10 @@ int FileCommands::DoCommand(REMOTE_COMMAND *pCommand, pthread_mutex_t *command_m
 	}
 	else if (pCommand->nCommand==FC_SAMPLE) {
 		//SensorDeploy s(this->m_szRootFolder,false);
-		//m_pSensorDataFile->SetFilename((char *)pCommand->pDataBytes);
+		m_pSensorDataFile->SetFilename((char *)pCommand->pDataBytes);
 		//s.Deploy();
 		usleep(5000000);//wait five seconds for sensors to stabilize in water
-		//m_pSensorDataFile->CollectAndSaveDataNow();
+		m_pSensorDataFile->CollectAndSaveDataNow();
 		//s.Retract();
 	}
 	else if (pCommand->nCommand==FC_WAIT) {
