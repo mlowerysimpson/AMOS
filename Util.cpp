@@ -5,6 +5,7 @@
 #include <wiringPi.h>
 #include <unistd.h>
 #include <stdlib.h>
+#include "filedata.h"
 
 Util::Util() {
 
@@ -149,14 +150,20 @@ double Util::slope(const std::vector<double>& x, const std::vector<double>& y) {
  * 
  * @param mut pointer to the mutex we are trying to lock
  * @param uiTimeoutMS a timeout value in milliseconds, after which it is time to give up trying to lock the mutex
+ * @param bCancel an optional pointer to a boolean variable that is true if this function needs to be exited immediately. Set to nullptr if not used.
  * @return true if the mutex was successfully locked
  * @return false if the mutex could not be locked during the specified time period
  */
-bool Util::trylock(pthread_mutex_t *mut, unsigned int uiTimeoutMS) {
+bool Util::trylock(pthread_mutex_t *mut, unsigned int uiTimeoutMS, bool *bCancel) {
 	unsigned int uiTimeoutTime = millis() + uiTimeoutMS;
 	while (millis()<uiTimeoutTime) {
 		if (pthread_mutex_trylock(mut)==0) {
 			return true;
+		}
+		if (bCancel != nullptr) {
+			if (*bCancel) {
+				return false;
+			}
 		}
 		usleep(1000);
 	}
@@ -201,4 +208,49 @@ char* Util::GetNameFromPath(char* szFullPath) {
 		strcpy(retVal, szFullPath);
 	}
 	return retVal;
+}
+
+void Util::CreateBackup(char* szFilename) {//creates a backup file of szFilename
+	//the backup file will have the same name as szFilename, except with a ".bak" extension added on
+	if (!szFilename) {
+		return;
+	}
+	char* szBackupFilename = new char[strlen(szFilename) + 5];
+	strcpy(szBackupFilename, szFilename);
+	strcat(szBackupFilename, (char *)".bak");
+	char* szCopyCommand = new char[2 * strlen(szFilename) + 256];
+	sprintf(szCopyCommand, "cp %s %s", szFilename, szBackupFilename);
+	system(szCopyCommand);
+	delete[]szCopyCommand;
+	delete[]szBackupFilename;
+}
+
+bool Util::BackupExists(char* szFilename) {//returns true if a backup file exists for sFilename
+	if (!szFilename) {
+		return false;
+	}
+	char* szBackupFilename = new char[strlen(szFilename) + 5];
+	strcpy(szBackupFilename, szFilename);
+	strcat(szBackupFilename, (char*)".bak");
+	int nBackupFilesize = filedata::getFileLength(szBackupFilename);
+	delete[]szBackupFilename;
+	return nBackupFilesize > 0;
+}
+
+void Util::RestoreFromBackup(char* szFilename) {//copies the corresponding backup file for szFilename over to szFilename
+	if (!szFilename) {
+		return;
+	}
+	char* szBackupFilename = new char[strlen(szFilename) + 5];
+	strcpy(szBackupFilename, szFilename);
+	strcat(szBackupFilename, (char*)".bak");
+	char* szCopyCommand = new char[2 * strlen(szFilename) + 256];
+	//first delete szFilename to ensure that the copy command does not fail
+	sprintf(szCopyCommand, "rm %s", szFilename);
+	system(szCopyCommand);
+	//now copy from backup file to szFilename
+	sprintf(szCopyCommand, "cp %s %s", szBackupFilename, szFilename);
+	system(szCopyCommand);
+	delete[]szCopyCommand;
+	delete[]szBackupFilename;
 }

@@ -83,7 +83,7 @@ public:
 	bool SendGPSData(int nHandle, bool bUseSerial);//send most recent GPS data out network socket or serial port connection
 	bool CollectCompassData(void *pShipLog);//collects a sample of compass data
 	bool SendCompassData(int nHandle, bool bUseSerial);//send most recent compass data out network socket or serial port connection
-	void ShowCompassError(const char *szErrorText);//show error text pertaining to the compass module... just display one error message per program session
+	void ShowCompassError(const char *szErrorText, void *pShipLog);//show error text pertaining to the compass module... just display one error message per program session
 	void TurnToCompassHeading(float fHeading,void *pThrusters,pthread_mutex_t *command_mutex, unsigned int *lastNetworkCommandTimeMS, void *pShipLog, bool *bCancel, int nPriority);//turn boat to desired compass heading
 	void DriveForwardForTime(int nTotalTimeSeconds, float fMaxSpeed, float fHeadingDirection, void *pThrusters, pthread_mutex_t *command_mutex, unsigned int *lastNetworkCommandTimeMS, void *pShipLog, bool *bCancel, bool bStopWhenDone, int nPriority);//drive boat forward for the specified time in seconds
 	void DriveToLocation(double dLatitude, double dLongitude, void *pThrusters, pthread_mutex_t *command_mutex, unsigned int *lastNetworkCommandTimeMS, void *pShipLog, int nInterpAmount, bool *bCancel, int nPriority);//drive boat to the specified GPS location

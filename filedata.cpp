@@ -901,7 +901,7 @@ void filedata::eraseData(char *category, char *field) {
 }
 
 
-int filedata::getFileLength(char *filename) //Finds the length of an opened file stream in bytes
+int filedata::getFileLength(char *filename) //Finds the length of a file in bytes
 {
 	FILE *p_file = NULL;
     p_file = fopen(filename,"rb");

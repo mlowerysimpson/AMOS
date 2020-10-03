@@ -12,21 +12,20 @@
 #include <pthread.h>
 #include <fcntl.h>
 
+extern SensorDataFile* g_sensorDataFile;//object used for logging sensor data to file
+extern LIDARLite* g_lidar;//object used for getting distance measurements to objects using LIDAR Lite
+
 //FileCommands constructor
 //szRootFolder = the root program folder (i.e. the folder where the prefs.txt (preferences) file is located
 //szFilename = the name of the text file that contains all of the commands to execute
 //pNavigator = pointer to navigation object used to get GPS data, compass data, compute courses, etc.
 //pThrusters = pointer to object used to control power to the boat's 2 propellers
-//pSensorDataFile = pointer to a SensorDataFile object that is used for storing sensor data to a text file.
-//pLidar = pointer to a LIDARLite object that is used for collecting LiDAR data for obstacle avoidance.
 //bCancel = pointer to boolean variable that will be "true" when the program is ending. It should be checked to end any currently executing file commands.
-FileCommands::FileCommands(char *szRootFolder, char *szFilename, Navigation *pNavigator, Thruster *pThrusters, SensorDataFile *pSensorDataFile, LIDARLite *pLidar, bool *bCancel) {//constructor, takes the file path of a commands file as argument
+FileCommands::FileCommands(char *szRootFolder, char *szFilename, Navigation *pNavigator, Thruster *pThrusters, bool *bCancel) {//constructor, takes the file path of a commands file as argument
 	m_szRootFolder = szRootFolder;//the folder where the prefs.txt (preferences) file is located 
 	m_bCancel = bCancel;
 	m_bExecutingFileCommand = false;
 	m_pBatteryCharge = nullptr;
-	m_pSensorDataFile = pSensorDataFile;
-	m_pLiDAR = pLidar;
 	m_bFileOK = false;
 	m_bRestTimeMode = false;
 	m_bTimeChecking = false;
@@ -698,6 +697,9 @@ int FileCommands::DoNextCommand(pthread_mutex_t *command_mutex, unsigned int *la
 		nRetval = DoCommand(m_commandList[m_nCurrentCommandIndex], command_mutex, lastNetworkCommandTimeMS, pShipLog);
 	}
 	m_nCurrentCommandIndex++;
+	//test
+	printf("m_nCurrentCommandIndex = %d, time = %u ms\n", m_nCurrentCommandIndex, millis());
+	//end test
 	return nRetval;
 }
 
@@ -756,7 +758,7 @@ int FileCommands::DoCommand(REMOTE_COMMAND *pCommand, pthread_mutex_t *command_m
 		m_pNavigator->HoldCurrentPosition(nTotalTimeSeconds,(void *)m_pThrusters,command_mutex,lastNetworkCommandTimeMS,pShipLog,m_bCancel,LOW_PRIORITY);
 	}
 	else if (pCommand->nCommand==FC_GRID_SAMPLE) {//collect sensor samples in a grid pattern
-		if (!m_pSensorDataFile) return 0;
+		if (!g_sensorDataFile) return 0;
 		double dLatitudeCorner1=0.0, dLongitudeCorner1=0.0;//1st corner of rectangle to sample
 		double dLatitudeCorner2=0.0, dLongitudeCorner2=0.0;//opposite corner of rectangle to sample
 		int nNumNSPts=0;//number of sensor samples to collect along north-south direction
@@ -800,7 +802,7 @@ int FileCommands::DoCommand(REMOTE_COMMAND *pCommand, pthread_mutex_t *command_m
 					//get actual current location
 					double dCurrentLatitude = m_pNavigator->GetLatitude();
 					double dCurrentLongitude = m_pNavigator->GetLongitude();
-					m_pSensorDataFile->SaveDataAtLocation(dCurrentLatitude, dCurrentLongitude);
+					g_sensorDataFile->SaveDataAtLocation(dCurrentLatitude, dCurrentLongitude);
 				}
 				//s.Retract();
 			}
@@ -808,10 +810,10 @@ int FileCommands::DoCommand(REMOTE_COMMAND *pCommand, pthread_mutex_t *command_m
 	}
 	else if (pCommand->nCommand==FC_SAMPLE) {
 		//SensorDeploy s(this->m_szRootFolder,false);
-		m_pSensorDataFile->SetFilename((char *)pCommand->pDataBytes);
+		g_sensorDataFile->SetFilename((char *)pCommand->pDataBytes);
 		//s.Deploy();
 		usleep(5000000);//wait five seconds for sensors to stabilize in water
-		m_pSensorDataFile->CollectAndSaveDataNow();
+		g_sensorDataFile->CollectAndSaveDataNow();
 		//s.Retract();
 	}
 	else if (pCommand->nCommand==FC_WAIT) {
@@ -891,8 +893,8 @@ void FileCommands::CheckTime() {//check to see if it is time for a rest, time to
 			if (this->m_pThrusters!=nullptr) {
 				this->m_pThrusters->Stop();
 			}
-			if (m_pLiDAR!=nullptr) {
-				m_pLiDAR->TurnOn(false);//turn off LiDAR to save a bit of power
+			if (g_lidar!=nullptr) {
+				g_lidar->TurnOn(false);//turn off LiDAR to save a bit of power
 			}
 		}
 	}
@@ -910,9 +912,9 @@ void FileCommands::CheckTime() {//check to see if it is time for a rest, time to
 				//it is now morning time
 				m_bRestTimeMode = false;
 				m_bSleepTime = false;
-				if (m_pLiDAR!=nullptr) {
+				if (g_lidar!=nullptr) {
 					//make sure that LiDAR is turned on
-					m_pLiDAR->TurnOn(true);
+					g_lidar->TurnOn(true);
 				}
 			}
 		}
@@ -1218,6 +1220,9 @@ int FileCommands::GetCurrentCommandIndex() {//return the index of the currently 
  * @return void
  */
 void FileCommands::ChangeCurrentStep(int nStepChange) {//change the index of the currently running script step
+	//test
+	printf("Changing current step in script by: %d\n", nStepChange);
+	//end test
 	int nCurrentCommandIndex = GetCurrentCommandIndex();
 	int nNumCommandSteps = GetNumCommands();
 	int nNewStepIndex = nCurrentCommandIndex + nStepChange;
@@ -1239,16 +1244,12 @@ void FileCommands::ChangeCurrentStep(int nStepChange) {//change the index of the
 	
 	if (m_bExecutingFileCommand) {
 		m_nCurrentCommandIndex = nNewStepIndex - 1;//change the current command index (need to decrement also, since it it automatically incremented after each command is executed or canceled, and we still need to cancel the currently executing command
-		int nStartIndex = m_nCurrentCommandIndex;
-		//cancel the currently executing command
-		*m_bCancel = true;
-		unsigned int uiTimeoutTime = millis() + 5000;//timeout after this length of time if the currently executing file commands thread cannot be canceled 
-		while (millis() < uiTimeoutTime && m_nCurrentCommandIndex == nStartIndex) {
-			usleep(100000);//sleep for 100 ms
-		}
-		*m_bCancel = false;
+		CancelCurrentOperation();//cancel the step currently in progress
 	}
 	else {
+		//test
+		printf("not executing file command\n");
+		//end test
 		m_nCurrentCommandIndex = nNewStepIndex;//not currently executing a command at the moment, so change the current command index to the new index directly
 	}
 }
@@ -1430,4 +1431,319 @@ bool FileCommands::ChangeToFile(char* szScriptName) {//change to a new file scri
 	SetRoutePlan();
 	CheckTime();
 	return m_bFileOK;
+}
+
+/**
+*@brief send a list of all of the data files available in the root program folder
+*
+* @param szRootFolder pointer to the root program folder where the main program is stored and run from
+* @param nSocket the socket ID for a serial port or network connection
+* @param bUseSerial set to true if using a serial port connection or false if using a network connection
+* @return true if the available data files could be succesfully sent, otherwise returns false if there was a problem.
+*/
+bool FileCommands::ListRemoteDataAvailable(char* szRootFolder, int nSocket, bool bUseSerial) {//send a list of all of the data files available in the root program folder
+	DIR* dir;
+	struct dirent* ent;
+	char sExt[8];//used for checking the file extension of each file
+	vector <char*>validDataFiles;
+	memset(sExt, 0, 8);
+	if ((dir = opendir(szRootFolder)) != NULL) {
+		/* check all the txt files within szRootFolder to see if they are valid data files */
+		while ((ent = readdir(dir)) != NULL) {
+			char* szFilename = ent->d_name;
+			int nFilenamelength = strlen(szFilename);
+			strcpy(sExt, (char*)&szFilename[nFilenamelength - 4]);
+			if (strcmp(sExt, (char*)".txt") == 0 || strcmp(sExt, (char*)".TXT") == 0) {
+				//text file
+				char* szFullpathname = new char[strlen(szRootFolder) + 2 + strlen(szFilename)];
+				sprintf(szFullpathname, "%s/%s", szRootFolder, szFilename);
+				if (isValidDataFile(szFullpathname)) {
+					validDataFiles.push_back(szFilename);
+				}
+				delete[]szFullpathname;
+			}
+		}
+		closedir(dir);
+	}
+	else {
+		/* could not open directory */
+		perror("");
+		return false;
+	}
+	int nNumDataFiles = validDataFiles.size();
+	int nNumBytesToSend = 0;
+	for (int i = 0; i < nNumDataFiles; i++) {
+		nNumBytesToSend += (strlen(validDataFiles[i]) + 1);
+	}
+	char* szBytesToSend = new char[nNumBytesToSend];//bytes to send over network or serial connection
+	int j = 0;
+	for (int i = 0; i < nNumDataFiles; i++) {
+		int nFilenameSize = strlen(validDataFiles[i]);
+		memcpy(&szBytesToSend[j], validDataFiles[i], nFilenameSize);
+		j += nFilenameSize;
+		szBytesToSend[j] = '\n';//terminate each filename with '\n'
+		j++;
+	}
+
+	//create and send BOAT_DATA structure for sending the file names
+	BOAT_DATA* pBoatData = BoatCommand::CreateBoatData(LIST_REMOTE_DATA);
+	memcpy(pBoatData->dataBytes, &nNumBytesToSend, sizeof(int));
+	pBoatData->checkSum = BoatCommand::CalculateChecksum(pBoatData);//calculate simple 8-bit checksum for BOAT_DATA structure
+	if (!BoatCommand::SendBoatData(nSocket, bUseSerial, pBoatData, nullptr)) {
+		delete pBoatData;
+		delete[] szBytesToSend;
+		return false;
+	}
+	//also send out bytes listing data filenames
+	if (bUseSerial) {//using serial port link
+		if (!BoatCommand::SendLargeSerialData(nSocket, (unsigned char*)szBytesToSend, nNumBytesToSend, nullptr)) {//send large amount of data out serial port, need to get confirmation after sending each chunk
+			delete pBoatData;
+			delete[] szBytesToSend;
+			return false;
+		}
+	}
+	else {//using network link
+		if (send(nSocket, szBytesToSend, nNumBytesToSend, 0) < 0) {
+			//error sending data
+			delete pBoatData;
+			delete[] szBytesToSend;
+			return false;
+		}
+	}
+	delete pBoatData;
+	delete[]szBytesToSend;
+	return true;
+}
+
+
+/**
+*@brief send a list of all of the log files available in the root program folder
+*
+* @param szRootFolder pointer to the root program folder where the main program is stored and run from
+* @param nSocket the socket ID for a serial port or network connection
+* @param bUseSerial set to true if using a serial port connection or false if using a network connection
+* @return true if the available data files could be succesfully sent, otherwise returns false if there was a problem.
+*/
+bool FileCommands::ListRemoteLogsAvailable(char* szRootFolder, int nSocket, bool bUseSerial) {//send a list of all of the log files available in the root program folder
+	DIR* dir;
+	struct dirent* ent;
+	char sExt[8];//used for checking the file extension of each file
+	vector <char*>validLogFiles;
+	memset(sExt, 0, 8);
+	if ((dir = opendir(szRootFolder)) != NULL) {
+		/* check all the txt files within szRootFolder to see if they are valid data files */
+		while ((ent = readdir(dir)) != NULL) {
+			char* szFilename = ent->d_name;
+			int nFilenamelength = strlen(szFilename);
+			strcpy(sExt, (char*)&szFilename[nFilenamelength - 4]);
+			if (strcmp(sExt, (char*)".txt") == 0 || strcmp(sExt, (char*)".TXT") == 0) {
+				//text file
+				char* szFullpathname = new char[strlen(szRootFolder) + 2 + strlen(szFilename)];
+				sprintf(szFullpathname, "%s/%s", szRootFolder, szFilename);
+				if (isValidLogFile(szFullpathname)) {
+					validLogFiles.push_back(szFilename);
+				}
+				delete[]szFullpathname;
+			}
+		}
+		closedir(dir);
+	}
+	else {
+		/* could not open directory */
+		perror("");
+		return false;
+	}
+	int nNumLogFiles = validLogFiles.size();
+	int nNumBytesToSend = 0;
+	for (int i = 0; i < nNumLogFiles; i++) {
+		nNumBytesToSend += (strlen(validLogFiles[i]) + 1);
+	}
+	char* szBytesToSend = new char[nNumBytesToSend];//bytes to send over network or serial connection
+	int j = 0;
+	for (int i = 0; i < nNumLogFiles; i++) {
+		int nFilenameSize = strlen(validLogFiles[i]);
+		memcpy(&szBytesToSend[j], validLogFiles[i], nFilenameSize);
+		j += nFilenameSize;
+		szBytesToSend[j] = '\n';//terminate each filename with '\n'
+		j++;
+	}
+
+	//create and send BOAT_DATA structure for sending the file names
+	BOAT_DATA* pBoatData = BoatCommand::CreateBoatData(LIST_REMOTE_LOG);
+	memcpy(pBoatData->dataBytes, &nNumBytesToSend, sizeof(int));
+	pBoatData->checkSum = BoatCommand::CalculateChecksum(pBoatData);//calculate simple 8-bit checksum for BOAT_DATA structure
+	if (!BoatCommand::SendBoatData(nSocket, bUseSerial, pBoatData, nullptr)) {
+		delete pBoatData;
+		delete[] szBytesToSend;
+		return false;
+	}
+	//also send out bytes listing data filenames
+	if (bUseSerial) {//using serial port link
+		if (!BoatCommand::SendLargeSerialData(nSocket, (unsigned char*)szBytesToSend, nNumBytesToSend, nullptr)) {//send large amount of data out serial port, need to get confirmation after sending each chunk
+			delete pBoatData;
+			delete[] szBytesToSend;
+			return false;
+		}
+	}
+	else {//using network link
+		if (send(nSocket, szBytesToSend, nNumBytesToSend, 0) < 0) {
+			//error sending data
+			delete pBoatData;
+			delete[] szBytesToSend;
+			return false;
+		}
+	}
+	delete pBoatData;
+	delete[]szBytesToSend;
+	return true;
+}
+
+/**
+*@brief return true if szFilename is a path to an AMOS data file
+*
+* @param szFilename the full path to a text file
+* @return true if szFilename is a path to an AMOS data file
+*/
+bool FileCommands::isValidDataFile(char* szFilename) {//return true if szFilename is a path to an AMOS data file
+	char* s1 = "AMOS Data File";
+	char* s2 = "AMOS Depth File";
+	int nLen1 = strlen(s1);
+	int nLen2 = strlen(s2);
+	
+	FILE* txtFile = fopen(szFilename, "r");//open in read-only mode
+	if (!txtFile) {
+		return false;
+	}
+	char inBuf[1024];
+	int nNumRead = fread(inBuf, 1, 1024, txtFile);//just read in up to 1k of text
+	bool bRetval = false;
+	for (int i = 0; i < nNumRead; i++) {
+		if (strncmp(s1, &inBuf[i], nLen1) == 0) {
+			bRetval = true;
+			break;
+		}
+		if (strncmp(s2, &inBuf[i], nLen2) == 0) {
+			bRetval = true;
+			break;
+		}
+	}
+	fclose(txtFile);
+	return bRetval;
+}
+
+/**
+*@brief return true if szFilename is a path to a vaoid AMOS shiplog file
+*
+* @param szFilename the full path to a text file
+* @return true if szFilename is a path to an AMOS data file
+*/
+bool FileCommands::isValidLogFile(char* szFilename) {//return true if szFilename is a path to a vaoid AMOS shiplog file
+	char* subStr = strstr(szFilename, "shiplog_");
+	if (subStr == nullptr) {
+		return false;
+	}
+	int nYr = 0, nMonth = 0, nDay = 0, nHr = 0, nMin = 0, nSec = 0;
+	if (sscanf(subStr, "shiplog_%d_%d_%d_%d_%d_%d", &nYr, &nMonth, &nDay, &nHr, &nMin, &nSec) == 6) {
+		return true;
+	}
+	return false;
+}
+
+/**
+*@brief cancel the step currently in progress
+* 
+*/
+void FileCommands::CancelCurrentOperation() {
+	if (!m_bExecutingFileCommand) return;//no command is currently being executed
+	int nStartIndex = m_nCurrentCommandIndex;
+	//cancel the currently executing command
+	*m_bCancel = true;
+	//test
+	printf("trying to cancel current step\n");
+	//end test
+	unsigned int uiTimeoutTime = millis() + 5000;//timeout after this length of time if the currently executing file commands thread cannot be canceled 
+	while (millis() < uiTimeoutTime && m_nCurrentCommandIndex == nStartIndex) {
+		usleep(100000);//sleep for 100 ms
+	}
+	//test
+	if (m_nCurrentCommandIndex == nStartIndex) {
+		printf("Error, timed out trying to cancel current step.\n");
+		unsigned int uiTimeElapsed = millis() - uiTimeoutTime;
+		printf("Time elapsed =  %u ms.\n", uiTimeElapsed);
+	}
+	else {
+		unsigned int uiTimeElapsed = millis() - uiTimeoutTime;
+		printf("Took %u ms to timeout.\n", uiTimeElapsed);
+	}
+	//end test
+	*m_bCancel = false;
+}
+
+bool FileCommands::ListRemoteImageAvailable(char* imageFolder, int nSocket, bool bUseSerial) {//send a list of all of the image files available in the Images subfolder
+	DIR* dir;
+	struct dirent* ent;
+	char sExt[8];//used for checking the file extension of each file
+	vector <char*>imageFiles;
+	memset(sExt, 0, 8);
+	if ((dir = opendir(imageFolder)) != NULL) {
+		//check for jpg and png files within imageFolder
+		while ((ent = readdir(dir)) != NULL) {
+			char* szFilename = ent->d_name;
+			int nFilenamelength = strlen(szFilename);
+			strcpy(sExt, (char*)&szFilename[nFilenamelength - 4]);
+			if (strcmp(sExt, (char*)".jpg") == 0 || strcmp(sExt, (char*)".JPG") == 0|| strcmp(sExt, (char*)".png") == 0 || strcmp(sExt, (char*)".PNG") == 0) {
+				//text file
+				imageFiles.push_back(szFilename);
+			}
+		}
+		closedir(dir);
+	}
+	else {
+		/* could not open directory */
+		perror("");
+		return false;
+	}
+	int nNumBytesToSend = 0;
+	int nNumImageFiles = imageFiles.size();
+	for (int i = 0; i < nNumImageFiles; i++) {
+		nNumBytesToSend += (strlen(imageFiles[i]) + 1);
+	}
+	char* szBytesToSend = new char[nNumBytesToSend];//bytes to send over network or serial connection
+	int j = 0;
+	for (int i = 0; i < nNumImageFiles; i++) {
+		int nFilenameSize = strlen(imageFiles[i]);
+		memcpy(&szBytesToSend[j], imageFiles[i], nFilenameSize);
+		j += nFilenameSize;
+		szBytesToSend[j] = '\n';//terminate each filename with '\n'
+		j++;
+	}
+
+	//create and send BOAT_DATA structure for sending the file names
+	BOAT_DATA* pBoatData = BoatCommand::CreateBoatData(LIST_REMOTE_IMAGE);
+	memcpy(pBoatData->dataBytes, &nNumBytesToSend, sizeof(int));
+	pBoatData->checkSum = BoatCommand::CalculateChecksum(pBoatData);//calculate simple 8-bit checksum for BOAT_DATA structure
+	if (!BoatCommand::SendBoatData(nSocket, bUseSerial, pBoatData, nullptr)) {
+		delete pBoatData;
+		delete[] szBytesToSend;
+		return false;
+	}
+	//also send out bytes listing data filenames
+	if (bUseSerial) {//using serial port link
+		if (!BoatCommand::SendLargeSerialData(nSocket, (unsigned char*)szBytesToSend, nNumBytesToSend, nullptr)) {//send large amount of data out serial port, need to get confirmation after sending each chunk
+			delete pBoatData;
+			delete[] szBytesToSend;
+			return false;
+		}
+	}
+	else {//using network link
+		if (send(nSocket, szBytesToSend, nNumBytesToSend, 0) < 0) {
+			//error sending data
+			delete pBoatData;
+			delete[] szBytesToSend;
+			return false;
+		}
+	}
+	delete pBoatData;
+	delete[]szBytesToSend;
+	return true;
 }

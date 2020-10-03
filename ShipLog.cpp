@@ -43,7 +43,7 @@ ShipLog::~ShipLog() {
 void ShipLog::LogEntry(char *szLogEntry, bool bPrintToScreen) {//add an entry to the log file, and optionally print to screen (standard output)
 #ifndef _WIN32
 	//pthread_mutex_lock(&m_logMutex);
-	if (!Util::trylock(&m_logMutex,1000)) {//unable to get mutex, just return without logging anything
+	if (!Util::trylock(&m_logMutex,1000,nullptr)) {//unable to get mutex, just return without logging anything
 		return;
 	}
 #endif

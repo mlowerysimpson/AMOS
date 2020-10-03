@@ -86,9 +86,9 @@ float AirProp::GetSpeed() {
 	return m_fSpeed;
 }
 
-void AirProp::DoMaxSpeedCal() {//apply maximum speed signal to propeller 
+void AirProp::DoMaxSpeedCal() {//apply 2 x maximum speed signal to propeller 
 	m_bCalMode=true;
-	SetSpeed(MAX_AIRPROP_SPEED);
+	SetSpeed(2*MAX_AIRPROP_SPEED);
 	m_bCalMode=false;
 }
 

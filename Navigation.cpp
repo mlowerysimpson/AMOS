@@ -241,16 +241,15 @@ bool Navigation::SendCompassData(int nHandle, bool bUseSerial) {
 //returns true if successful
 bool Navigation::CollectCompassData(void *pShipLog) {//collects a sample of compass data
 	const int NUM_TO_AVG = 1;//number of individual samples to average for each call to IMU::GetSample
-	ShipLog *pLog = (ShipLog *)pShipLog;
 	if (!m_imu) {
 		m_imu = Navigation::CreateCompass();
 	}
 	if (!m_imu) {
-		ShowCompassError("Error, unable to create compass.\n");
+		ShowCompassError("Error, unable to create compass.\n",pShipLog);
 		return false;
 	}
 	if (!m_imu->GetSample(&this->m_imuData,NUM_TO_AVG)) {
-		ShowCompassError("Error getting compass data.\n");
+		ShowCompassError("Error getting compass data.\n",pShipLog);
 		return false;
 	}
 	//adjust compass data for magnetic declination
@@ -279,11 +278,12 @@ bool Navigation::CollectCompassData(void *pShipLog) {//collects a sample of comp
 	return true;
 }
 
-void Navigation::ShowCompassError(const char *szErrorText) {//show error text pertaining to the compass module... just display one error message per program session
+void Navigation::ShowCompassError(const char *szErrorText, void *pShipLog) {//show error text pertaining to the compass module... just display one error message per program session
 	if (m_bCompassErrorShown) {
 		return;//already shown compass error
 	}
-	printf(szErrorText);
+	ShipLog* pLog = (ShipLog*)pShipLog;
+	pLog->LogEntry((char *)szErrorText, true);
 	m_bCompassErrorShown=true;
 }
 
@@ -341,10 +341,10 @@ double Navigation::ComputeHeadingDif(double dHeading1Deg,double dHeading2Deg) {/
  */
  void Navigation::TurnToCompassHeading(float fHeading,void *pThrusters,pthread_mutex_t *command_mutex, unsigned int *lastNetworkCommandTimeMS, void *pShipLog, bool *bCancel, int nPriority) {//turn boat to desired heading
 	float MAX_TURN_SPEED = 5;
-	const int REVERSE_TIME_SEC = 30;//try turning in opposite direction after this many seconds (necessary sometimes when stuck on rocks, etc.)
+	const int REVERSE_TIME_SEC = 45;//try turning in opposite direction after this many seconds (necessary sometimes when stuck on rocks, etc.)
 	const int TIMEOUT_TIME_SEC = 600;//length of time in seconds to allow for this function. If we're still in this function after this length of time then exit!
 	const float CLOSE_ENOUGH_DEG = 30;//try to get heading to match up within this amount
-	const int REVERSE_THRUST_TIME_SEC = 10;//length of time in seconds to try reversing turning direction (at maximum speed). Used when normal turning doesn't seem to be working, e.g. when stuck on rocks.
+	const int REVERSE_THRUST_TIME_SEC = 20;//length of time in seconds to try reversing turning direction (at maximum speed). Used when normal turning doesn't seem to be working, e.g. when stuck on rocks.
 
 	float fSpeedLeft=0, fSpeedRight=0;//left and right thruster speeds (start at slow speed)
 	char sMsg[256];
@@ -387,7 +387,7 @@ double Navigation::ComputeHeadingDif(double dHeading1Deg,double dHeading2Deg) {/
 	}
 	CheckPriority(nPriority);//check to see if there are no other higher priority threads trying to execute a navigation command at the same time
 
-	if (!Util::trylock(command_mutex,10000)) {
+	if (!Util::trylock(command_mutex,10000,bCancel)) {
 		return;
 	}
 	pThrust->Stop();
@@ -441,7 +441,7 @@ double Navigation::ComputeHeadingDif(double dHeading1Deg,double dHeading2Deg) {/
 		//strcpy(sMsg,(char *)"About to lock mutex.\n");
 		//pLog->LogEntry(sMsg,true);
 		//end test
-		if (!Util::trylock(command_mutex,10000)) {
+		if (!Util::trylock(command_mutex,10000,bCancel)) {
 			return;
 		}
 		////test
@@ -472,7 +472,7 @@ double Navigation::ComputeHeadingDif(double dHeading1Deg,double dHeading2Deg) {/
 			strcpy(sMsg,(char *)"Reversing.\n");
 			pLog->LogEntry(sMsg,true);
 			//end test
-			while (millis()<uiReverseStop&&fabs(dHeadingDif)>CLOSE_ENOUGH_DEG) {
+			while (millis()<uiReverseStop&&fabs(dHeadingDif)>CLOSE_ENOUGH_DEG&&!*bCancel) {
 				usleep(100000);//0.1 second pause
 				dHeadingDif = ComputeHeadingDif(m_imuData.heading,(double)fHeading);
 			}
@@ -502,7 +502,7 @@ double Navigation::ComputeHeadingDif(double dHeading1Deg,double dHeading2Deg) {/
 	while ((millis() - *lastNetworkCommandTimeMS)<10000&&!*bCancel) {
 		usleep(1000000);//delay executing thruster actions after recent network commands
 	}
-	if (Util::trylock(command_mutex,10000)) {
+	if (Util::trylock(command_mutex,10000,bCancel)) {
 		pThrust->Stop();//stop thrusters after desired heading is achieved
 		pthread_mutex_unlock(command_mutex);
 	}
@@ -870,9 +870,7 @@ char *Navigation::GetStatusLogText() {
 		usleep(1000000);//delay executing thruster actions after recent network commands
 	}
 	CheckPriority(nPriority);
-	pthread_mutex_lock(command_mutex);
 	pThrust->Stop();
-	pthread_mutex_unlock(command_mutex);
 }
 
 //ComputeHeadingAndDistToDestination: use current GPS location to get initial heading to destination (assumes distance to destination is small in relation to the radius of the earth)

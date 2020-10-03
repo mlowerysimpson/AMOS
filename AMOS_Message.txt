@@ -1,0 +1,141 @@
+//boat commands script
+
+label: start
+waypoint: 45.875300, -66.911218
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.876494, -66.909344
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.878325, -66.906074
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.877386, -66.906074
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.877768, -66.907103
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.877370, -66.906074
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.876510, -66.906074
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.878054, -66.904542
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.877067, -66.904336
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.877592, -66.903170
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.876048, -66.904130
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.875873, -66.903239
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.877306, -66.902461
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.876860, -66.900586
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.875412, -66.901272
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.875857, -66.903239
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.875428, -66.901272
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.875443, -66.900586
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.875300, -66.898620
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.875762, -66.898666
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.876192, -66.900381
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.876844, -66.900083
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.876478, -66.898254
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.875635, -66.896242
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.874122, -66.896791
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.874488, -66.895511
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.873692, -66.895808
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.874488, -66.893933
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.873199, -66.895053
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.874090, -66.893064
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.873151, -66.893293
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.873549, -66.894070
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.873167, -66.893270
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.872483, -66.893544
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.871798, -66.891738
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.872339, -66.891395
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.872944, -66.892675
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.873788, -66.892150
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.872944, -66.890823
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.871734, -66.888788
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.870333, -66.890480
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.871034, -66.889634
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.870445, -66.888560
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.871113, -66.887668
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.869728, -66.889383
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.869458, -66.889109
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.870254, -66.888103
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.869728, -66.887211
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.870238, -66.888080
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.870891, -66.887394
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.870365, -66.886502
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.870891, -66.887417
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.869410, -66.889109
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.868805, -66.888080
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.868407, -66.887760
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.869712, -66.885953
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.869108, -66.885153
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.868646, -66.886022
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.869076, -66.886731
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.867691, -66.886891
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.867515, -66.886639
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.868869, -66.884741
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.868152, -66.883598
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.868885, -66.884764
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.868232, -66.885610
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.867452, -66.884513
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.868216, -66.885633
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.867515, -66.886616
+sample: sensordata.txt //sample sensors and save to sensordata.txt file
+waypoint: 45.867022, -66.885816
+sample: sensordata.txt //sample sensors and save to sensordata.txt file

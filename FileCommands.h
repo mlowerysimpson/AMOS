@@ -11,7 +11,7 @@
 
 class FileCommands {
 public:
-	FileCommands(char *rootFolder, char *szFilename, Navigation *pNavigator, Thruster *pThrusters, SensorDataFile *pSensorDataFile, LIDARLite *pLidar, bool *bCancel);//constructor takes path of commands filename as input
+	FileCommands(char *rootFolder, char *szFilename, Navigation *pNavigator, Thruster *pThrusters, bool *bCancel);//constructor takes path of commands filename as input
 	~FileCommands();//destructor
 	bool m_bExecutingFileCommand;//true if a file command is currently being executed (by the DoCommand function)
 	bool m_bFileOK;//true if the file could be successfully found, opened, and parsed
@@ -25,11 +25,17 @@ public:
 	void PrintOutCommandList();//test function for printing out list of commands
 	bool ChangeToFile(char *szScriptName);//change to a new file script
 	int DoNextCommand(pthread_mutex_t *command_mutex, unsigned int *lastNetworkCommandTimeMS, void *pShipLog);//execute the next command in the list of file commands
+	void CancelCurrentOperation();//cancel the step currently in progress
 	static bool doesFileExist(char *szFilename);//return true if the file exists
 	static bool HasGPSWaypoints(FileCommands *pFileCommands);//return true if the pFileCommands object has one or more GPS waypoints associated with it (i.e. one or more "hold" or "waypoint" entries)
 	static bool SendRemoteScriptInfo(FileCommands *pFileCommandsObj, int nSocket, bool bUseSerial);//send info about the current file script (if any) that is running
 	static bool ListRemoteScriptsAvailable(char *szRootFolder, int nSocket, bool bUseSerial);//return a list of all of the file scripts available in the root program folder
+	static bool ListRemoteDataAvailable(char* szRootFolder, int nSocket, bool bUseSerial);//send a list of all of the data files available in the root program folder
+	static bool ListRemoteLogsAvailable(char* szRootFolder, int nSocket, bool bUseSerial);//send a list of all of the log files available in the root program folder
+	static bool ListRemoteImageAvailable(char *imageFolder, int nSocket, bool bUseSerial);//send a list of all of the image files available in the Images subfolder
 	static bool isValidScriptFile(char* szFilename);//return true if szFilename is a path to an AMOS script file
+	static bool isValidDataFile(char* szFilename);//return true if szFilename is a path to an AMOS data file
+	static bool isValidLogFile(char* szFilename);//return true if szFilename is a path to a vaoid AMOS shiplog file
 	void ContinueFromPrevious();//continue at the last known stage of the file command sequence (i.e. from previous program instance, useful for example in picking up where you left off if AMOS goes into sleep mode for a while to charge up its battery)
 	void SetStepToClosestGPSWaypoint();//necessary to do this in case AMOS drifted a long distance while sleeping
 	void IncrementAndSaveCommandIndex();//increment the file command index and save index to prefs.txt file
@@ -66,8 +72,6 @@ private:
 	unsigned int m_uiPictureNumber;//the number of the last picture taken using the "photo" file command
 	vector <double>m_safeLat;//safe point latitudes (in degrees) where solar re-charging is optimal
 	vector <double>m_safeLong;//safe point longitudes (in degrees) where solar re-charging is optimal
-	LIDARLite *m_pLiDAR;//object used for making LiDAR measurements (can be turned off to save a bit of power)
-	SensorDataFile *m_pSensorDataFile;//pointer to object used for storing sensor data to file
 	char *m_szRootFolder;//the folder where the prefs.txt (preferences) file is located 
 	bool *m_bCancel;//pointer to boolean variable that will be "true" when the program is ending. It should be checked to end any currently executing file commands.
 	char *m_szFilename;//the name of the command file

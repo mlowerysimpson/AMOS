@@ -25,14 +25,26 @@
 #define SCRIPT_STEP_CHANGE 26//used to change the step of the currently running file script
 #define LIST_REMOTE_SCRIPTS 27//command sent to AMOS to return a list of all of the available remote scripts
 #define USE_REMOTE_SCRIPT 28//command sent to AMOS to use a particular remote script
-#define FILE_TRANSFER 29//transfer a particular file
-#define LAST_COMMAND 29//the highest possible command #
+#define FILE_TRANSFER 29//transfer a particular file to AMOS
+#define FILE_RECEIVE 30//receive / download a particular file from AMOS
+#define REFRESH_SETTINGS 31//command to refresh settings from a partiulcar part of the prefs.txt file
+#define LIST_REMOTE_DATA 32//command sent to AMOS to return a list of all of the available data files
+#define LIST_REMOTE_LOG 33//command sent to AMOS to return a list of all of the available log files
+#define LIST_REMOTE_IMAGE 34//command sent to AMOS to return a list of all of the available image files
+#define LAST_COMMAND 34//the highest possible command #
 
 #define PASSCODE_TEXT "AMOS2018"
 
 #define NUM_RESEND_SYNC_BYTES 10 //number of sync bytes to use before re-sending a large data chunk
 
 #define REMOTE_SCRIPT_NAMELENGTH 64 //number of bytes allocated to the name of the text script file running on the boat
+
+ //various settings types
+#define AMOS_ALARM_SETTINGS 1
+#define AMOS_LIDAR_SETTINGS 2
+#define AMOS_SENSOR_SETTINGS 3
+#define AMOS_CAMERA_SETTINGS 4
+#define AMOS_BATTERY_SETTINGS 5
 
 
 
@@ -93,6 +105,8 @@ public:
 	static bool SendBoatData(int nSocket, bool bUseSerial, BOAT_DATA *boatData, void *pDiagnostics);//sends boat data out over socket or serial port connection
 	static bool SendLargeSerialData(int nSocket, unsigned char *outputBuf, int nNumToSend, void *pDiagSensor);//send large amount of data out serial port, need to get confirmation after sending each chunk
 	static unsigned char CalculateChecksum(BOAT_DATA *pData);//calculate simple 8-bit checksum for BOAT_DATA structure
+	static int Encrypt(char *destBuf, char *sourceBuf, int nSize);
+	static int Decrypt(char* destBuf, char* sourceBuf, int nSize);
 	
 private:
 	static int fillchunk(unsigned char *chunkBuf,int nChunkID,unsigned char *outputBuf,int nBufSize,int nBufIndex,int nMaxChunkSize);

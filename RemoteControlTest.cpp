@@ -30,6 +30,7 @@
 #include "AToD.h"
 #include "PHSensor.h"
 #include "TurbiditySensor.h"
+#include "AtlasDO2Sensor.h"
 #include "SensorDataFile.h"
 #include "DiagnosticsSensor.h"
 #include "HumiditySensor.h"
@@ -61,6 +62,7 @@ TempSensor g_tempsensor;//interface for waterproof temperature sensor, poll to m
 DiagnosticsSensor *g_shipdiagnostics;//interface for ship monitoring, power control, etc.
 PHSensor *g_PHSensor;//interface object for pH probe
 TurbiditySensor *g_turbiditySensor;//interface object for turbidity sensor
+AtlasDO2Sensor* g_do2Sensor;//interface object for dissolved oxygen sensor
 SwitchRelay *g_switchRelay;//interface object for controlling switch relay (eg. for switching solar input to charge controller on / off)
 HelixDepth* g_helixDepth;//interface for getting depth readings from Humminbird Helix fish finder
 Vision g_vision;//object used for taking pictures with camera(s)
@@ -88,6 +90,8 @@ bool g_bNetClientThreadRunning;//boolean flag is true when the network client th
 bool g_bSerportThreadRunning;//boolean flag is true when the serial port thread is running (monitor flag to make sure that thead and serial port get closed correctly)
 bool g_bGPSThreadRunning;//boolean flag is true when the gps collection thread is running
 bool g_bSensorThreadRunning;//boolean flag is true when the sensor collection thread is running
+bool g_bExitFileCommandsThread;//boolean flag used to control when the file commands thread should exit
+bool g_bFileCommandsThreadRunning;//boolean flag is true when the file commands thread is running
 char *g_serPort;//the text identifier of the serial port being used for a wireless serial link (set to nullptr if not used)
 char g_keyboardBuf[4];//used to keep track of the last 4 characters typed by the user, looking for the word "quit" to exit the program
 int g_keyTypedIndex;//index within g_keyboardBuf for where to store the next keyboard character typed
@@ -140,7 +144,7 @@ void *serportFunction(void *pParam) {//function receives commands from base stat
 	sprintf(sMsg,"Listening for commands on port %s\n",szSerportName);
 	g_shiplog.LogEntry(sMsg,true);
 
-	RemoteCommand *pRC = new RemoteCommand((char *)g_rootFolder, fd, g_navigator, g_thrusters, g_atod, g_sensorDataFile, &g_vision, &g_remoteCommandsMutex, (void *)&g_shiplog);
+	RemoteCommand *pRC = new RemoteCommand((char *)g_rootFolder, fd, g_navigator, g_thrusters, g_atod, (void *)&g_shiplog);
 	pRC->SetSerportMode(true);//set the RemoteCommand object to use serial port communications
 	while (g_bKeepGoing) {
 		REMOTE_COMMAND *pCommandReceived = pRC->GetCommand();
@@ -156,6 +160,7 @@ void *serportFunction(void *pParam) {//function receives commands from base stat
 			pRC->ExecuteCommand(pCommandReceived, true);
 			if (pCommandReceived->nCommand==QUIT_PROGRAM) {
 				g_bKeepGoing=false;//remote command to quit program was received
+				g_bCancelFunctions = true;//cancel any navigation functions that might be in progress
 			}
 			RemoteCommand::DeleteCommand(pCommandReceived);
 			pthread_mutex_unlock(&g_remoteCommandsMutex);
@@ -219,7 +224,7 @@ void *clientNetFunction(void *pParam) {//function connects to the boat server an
 		setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof tv);
 
 		//keep trying to receive data on this socket until an error occurs
-		RemoteCommand *pRC = new RemoteCommand((char *)g_rootFolder, sockfd,g_navigator,g_thrusters,g_atod,g_sensorDataFile,&g_vision,&g_remoteCommandsMutex,(void *)&g_shiplog);
+		RemoteCommand *pRC = new RemoteCommand((char *)g_rootFolder, sockfd,g_navigator,g_thrusters,g_atod,(void *)&g_shiplog);
 		int nErrorCount=0;
 		while (g_bKeepGoing) {
 			REMOTE_COMMAND *pCommandReceived = pRC->GetCommand();
@@ -236,6 +241,7 @@ void *clientNetFunction(void *pParam) {//function connects to the boat server an
 				pRC->ExecuteCommand(pCommandReceived, false);
 				if (pCommandReceived->nCommand==QUIT_PROGRAM) {
 					g_bKeepGoing=false;//remote command to quit program was received
+					g_bCancelFunctions = true;//cancel any navigation functions that might be in progress
 				}
 				RemoteCommand::DeleteCommand(pCommandReceived);
 				pthread_mutex_unlock(&g_remoteCommandsMutex);
@@ -540,12 +546,18 @@ void *sensorCollectionFunction(void *pParam) {
 }
 
 void *fileCommandsFunction(void *pParam) {
-	while (g_bKeepGoing) {
+	g_bFileCommandsThreadRunning = true;
+	g_bExitFileCommandsThread = false;
+	while (g_bKeepGoing&&!g_bExitFileCommandsThread) {
 		if (g_fileCommands) {
 			if (g_lastNetworkCommandTime>0) {//don't execute file commands within 10 seconds of the last network command time
-				while ((millis() - g_lastNetworkCommandTime)<10000) {
+				while ((millis() - g_lastNetworkCommandTime)<10000&&g_bKeepGoing&&!g_bExitFileCommandsThread) {
 					usleep(1000000);
 				}
+			}
+			if (!g_bKeepGoing || g_bExitFileCommandsThread) {
+				g_bFileCommandsThreadRunning = false;
+				return nullptr;
 			}
 			int nCommandAction = g_fileCommands->DoNextCommand(&g_remoteCommandsMutex,&g_lastNetworkCommandTime,(void *)&g_shiplog);
 			if (nCommandAction==FC_WAIT) {
@@ -554,6 +566,7 @@ void *fileCommandsFunction(void *pParam) {
 					//increment index of file command and save to prefs.txt
 					g_fileCommands->IncrementAndSaveCommandIndex();
 					EnterSleepMode(nWaitTimeSec);
+					g_bFileCommandsThreadRunning = false;
 					return nullptr;
 				}
 				else if (nWaitTimeSec>0) {
@@ -566,15 +579,17 @@ void *fileCommandsFunction(void *pParam) {
 				//increment index of file command and save to prefs.txt
 				g_fileCommands->IncrementAndSaveCommandIndex();
 				EnterSleepMode(g_fileCommands->GetSleepTimeHrs()*3600);
+				g_bFileCommandsThreadRunning = false;
 				return nullptr;
 			}
 		}
 	}
+	g_bFileCommandsThreadRunning = false;
 	return nullptr;
 }
 
 bool isSomethingToLog() {//return true if boat is logging at least some data
-	if (g_bLogWaterTemp||g_bLogBoatTemp||g_bLogGPSData||g_PHSensor!=nullptr||g_turbiditySensor!=nullptr) {
+	if (g_bLogWaterTemp||g_bLogBoatTemp||g_bLogGPSData||g_PHSensor!=nullptr||g_turbiditySensor!=nullptr||g_do2Sensor!=nullptr) {
 		return true;
 	}
 	return false;
@@ -601,7 +616,7 @@ void ExecuteCommand(REMOTE_COMMAND *pCommand) {//executes the remote command nCo
 void Cleanup() {//remove any un-executed commands from the queue, do general cleanup of memory, and cancel any running threads
 	//pause for a bit to allow network client thread to exit cleanly, so that socket connection (if any) gets properly closed
 	unsigned int uiTimeoutTime = millis() + 30000;//allow up to 30 seconds for threads to exit cleanly
-	while (millis()<uiTimeoutTime&&(g_bNetClientThreadRunning||g_bSerportThreadRunning||g_bGPSThreadRunning||g_bSensorThreadRunning)) {
+	while (millis()<uiTimeoutTime&&(g_bNetClientThreadRunning||g_bSerportThreadRunning||g_bGPSThreadRunning||g_bSensorThreadRunning||g_bFileCommandsThreadRunning)) {
 		usleep(100000);//sleep for 100 ms
 	}
 	if (millis()>uiTimeoutTime) {
@@ -729,9 +744,31 @@ void StartFileCommandsThread() {//start thread for executing commands from a tex
 	}
 }
 
-void GetDataLoggingPreferences() {//get data logging preferences from prefs.txt file
-	char sMsg[128];
-	filedata prefsFile((char *)"prefs.txt");
+bool GetDataLoggingPreferences() {//get data logging preferences from prefs.txt file
+	char sMsg[256];
+	char sPrefsFilename[PATH_MAX];
+	sprintf(sPrefsFilename,"%s/prefs.txt", g_rootFolder);
+	if (filedata::getFileLength(sPrefsFilename) <= 0) {
+		//no data in the prefs.txt file. This can happen sometimes if AMOS's power switch is abruptly switched off by the user without stopping this program first. If the program happens to be writing prefs.txt at the time that power is killed it will typically leave it as an empty file.
+		strcpy(sMsg, "prefs.txt file is empty or does not exist (program not shutdown cleanly last time?). Looking for backup prefs file...");
+		g_shiplog.LogEntry(sMsg, true);
+		if (Util::BackupExists(sPrefsFilename)) {
+			Util::RestoreFromBackup(sPrefsFilename);
+			strcpy(sMsg, "prefs.txt file restored from backup.");
+			g_shiplog.LogEntry(sMsg, true);
+		}
+		else {
+			//backup does not exist, need to create a valid prefs.txt file manually
+			strcpy(sMsg, "Error, backup file for prefs.txt does not exist, please contact In Nature Robotics Ltd. for assistance");
+			g_shiplog.LogEntry(sMsg, true);
+			return false;
+		}
+	}
+	else {
+		//prefs.txt file exists and is non-zero, so update the current backup file to match it.
+		Util::CreateBackup(sPrefsFilename);
+	}
+	filedata prefsFile(sPrefsFilename);
 	//compass setting
 	double dDeclination = prefsFile.getDouble((char*)"[compass]", "declination");
 	g_navigator->SetDeclination(dDeclination);
@@ -740,6 +777,10 @@ void GetDataLoggingPreferences() {//get data logging preferences from prefs.txt 
 	g_bLogBoatTemp = (bool)prefsFile.getInteger((char *)"[sensors]",(char *)"boattemp");
 	g_bLogGPSData = (bool)prefsFile.getInteger((char *)"[sensors]",(char *)"gps");
 	bool bGetPHData = (bool)prefsFile.getInteger((char *)"[sensors]",(char *)"ph_probe");
+	if (g_PHSensor!=nullptr) {//delete pH sensor object if it already exists
+		delete g_PHSensor;
+		g_PHSensor = nullptr;
+	}
 	if (bGetPHData) {
 		PH_CALIBRATION phcal;
 		phcal.dLowCalVoltage = prefsFile.getDouble((char *)"[sensors]",(char *)"ph_lowvolt");
@@ -748,6 +789,18 @@ void GetDataLoggingPreferences() {//get data logging preferences from prefs.txt 
 		phcal.dMidCalPH = prefsFile.getDouble((char *)"[sensors]",(char *)"ph_midph");
 		int nPHChannel = prefsFile.getInteger((char *)"[sensors]",(char *)"ph_channel");//A to D channel for pH measurements
 		g_PHSensor = new PHSensor(nPHChannel, g_atod, &phcal);
+	}
+	if (g_turbiditySensor != nullptr) {
+		delete g_turbiditySensor;
+		g_turbiditySensor = nullptr;
+	}
+	if (g_do2Sensor != nullptr) {
+		delete g_do2Sensor;
+		g_do2Sensor = nullptr;
+	}
+	bool bGetDO2Data = (bool)prefsFile.getInteger((char*)"[sensors]", (char*)"do2_sensor");
+	if (bGetDO2Data) {
+		g_do2Sensor = new AtlasDO2Sensor(&g_i2cMutex);
 	}
 	bool bGetTurbidity = (bool)prefsFile.getInteger((char *)"[sensors]",(char *)"turbidity_sensor");
 	if (bGetTurbidity) {
@@ -788,10 +841,11 @@ void GetDataLoggingPreferences() {//get data logging preferences from prefs.txt 
 	char *loggingInterval = NULL;
 	g_nLoggingIntervalSec=0;
 	prefsFile.getString((char *)"[sensors]",(char *)"data_interval",&loggingInterval);
-	if (loggingInterval) {
+	if (loggingInterval!=NULL) {
 		int nHrs=0, nMin=0, nSec=0;
 		sscanf(loggingInterval,"%d:%d:%d",&nHrs, &nMin, &nSec);
 		g_nLoggingIntervalSec = nHrs*3600 + nMin*60 + nSec;
+		delete[] loggingInterval;
 	}
 	
 	if (isSomethingToLog()) {//g_bLogWaterTemp||g_bLogBoatTemp||g_bLogGPSData||g_PHSensor!=nullptr||g_turbiditySensor!=nullptr) {
@@ -828,6 +882,11 @@ void GetDataLoggingPreferences() {//get data logging preferences from prefs.txt 
 			sensorObjects[nNumSensors] = (void *)g_turbiditySensor;
 			nNumSensors++;
 		}
+		if (g_do2Sensor) {
+			sensorTypes[nNumSensors] = DO2_DATA;
+			sensorObjects[nNumSensors] = (void*)g_do2Sensor;
+			nNumSensors++;
+		}
 		//leak sensor
 		sensorTypes[nNumSensors] = LEAK_DATA;
 		sensorObjects[nNumSensors] = (void *)&g_leaksensor;
@@ -836,6 +895,10 @@ void GetDataLoggingPreferences() {//get data logging preferences from prefs.txt 
 		sensorTypes[nNumSensors] = DIAGNOSTICS_DATA;
 		sensorObjects[nNumSensors] = (void *)g_shipdiagnostics;
 		nNumSensors++;
+		if (g_sensorDataFile != NULL) {
+			delete g_sensorDataFile;
+			g_sensorDataFile = NULL;
+		}
 		g_sensorDataFile = new SensorDataFile(sensorTypes, nNumSensors, sensorObjects, (char *)"sensordata.txt", g_nLoggingIntervalSec);
 		//depth readings
 		bool bDepthReadings = (bool)prefsFile.getInteger((char*)"[sensors]", (char*)"depth");
@@ -846,6 +909,10 @@ void GetDataLoggingPreferences() {//get data logging preferences from prefs.txt 
 				char* szDepthFilename = NULL;
 				prefsFile.getString("[sensors]", "depth_filename", &szDepthFilename);
 				if (szDepthFilename) {
+					if (g_helixDepth != NULL) {
+						delete g_helixDepth;
+						g_helixDepth = NULL;
+					}
 					g_helixDepth = new HelixDepth(g_navigator, szDepthSerport, szDepthFilename);
 					delete[]szDepthFilename;
 				}
@@ -853,7 +920,7 @@ void GetDataLoggingPreferences() {//get data logging preferences from prefs.txt 
 			}
 		}
 	}
-
+	return true;
 }
 
 /**
@@ -889,6 +956,10 @@ int main(int argc, const char * argv[]) {
 	getcwd(g_rootFolder,PATH_MAX);
 	g_shipdiagnostics = nullptr;
 	g_sensorDataFile = nullptr;
+	g_PHSensor = nullptr;
+	g_turbiditySensor = nullptr;
+	g_do2Sensor = nullptr;
+	g_helixDepth = nullptr;
 	g_serPort = nullptr;
 	g_switchRelay = nullptr;
 	g_bEnteringSleepMode = false;
@@ -898,6 +969,8 @@ int main(int argc, const char * argv[]) {
 	g_bSerportThreadRunning=false;
 	g_bGPSThreadRunning = false;
 	g_bSensorThreadRunning = false;
+	g_bExitFileCommandsThread = false;
+	g_bFileCommandsThreadRunning = false;
 	g_nLoggingIntervalSec = 0;
 	g_lastNetworkCommandTime=0;
 	g_bVoltageSwitchedOff=false;
@@ -965,7 +1038,12 @@ int main(int argc, const char * argv[]) {
 			}
 		}
 	}
-	GetDataLoggingPreferences();//get data logging preferences from prefs.txt file
+	//get data logging preferences from prefs.txt file
+	if (!GetDataLoggingPreferences()) {
+		//error trying to access prefs.txt file
+		Cleanup();
+		return 3;
+	}		
 
 	//test
 	printf("Got data logging preferences.\n");
@@ -973,9 +1051,10 @@ int main(int argc, const char * argv[]) {
 	bool bContinuedFromPrevious = false;
 	if (argc>=3) {
 		char *commandFilename = (char *)argv[2];
-		g_fileCommands = new FileCommands(g_rootFolder,commandFilename,g_navigator,g_thrusters,g_sensorDataFile,g_lidar,&g_bCancelFunctions);
+		g_fileCommands = new FileCommands(g_rootFolder,commandFilename,g_navigator,g_thrusters,&g_bCancelFunctions);
 		if (!g_fileCommands->m_bFileOK) {
 			printf("Error trying to open or parse file: %s\n",commandFilename);
+			Cleanup();
 			return 2;
 		}
 		if (!FileCommands::HasGPSWaypoints(g_fileCommands)) {//don't worry about low startup voltage if boat is being manually navigated

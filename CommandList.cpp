@@ -17,6 +17,8 @@
 #endif
 #include <string.h>
 
+#define AMOSEN_VAL "tyo7-rDeI-3OOEfz"
+
 BoatCommand::BoatCommand() {
 
 }
@@ -114,8 +116,38 @@ BOAT_DATA * BoatCommand::CreateBoatData(int nDataType) {//create an empty BOAT_D
 		pAMOSData->dataBytes = new unsigned char[pAMOSData->nDataSize];
 		pAMOSData->checkSum = CalculateChecksum(pAMOSData);//checksum needs to be recalculated
 	}
+	else if (nDataType == LIST_REMOTE_DATA) {
+		pAMOSData->nPacketType = LIST_REMOTE_DATA;
+		pAMOSData->nDataSize = sizeof(int);
+		pAMOSData->dataBytes = new unsigned char[pAMOSData->nDataSize];
+		pAMOSData->checkSum = CalculateChecksum(pAMOSData);//checksum needs to be recalculated
+	}
+	else if (nDataType == LIST_REMOTE_LOG) {
+		pAMOSData->nPacketType = LIST_REMOTE_LOG;
+		pAMOSData->nDataSize = sizeof(int);
+		pAMOSData->dataBytes = new unsigned char[pAMOSData->nDataSize];
+		pAMOSData->checkSum = CalculateChecksum(pAMOSData);//checksum needs to be recalculated
+	}
+	else if (nDataType == LIST_REMOTE_IMAGE) {
+		pAMOSData->nPacketType = LIST_REMOTE_IMAGE;
+		pAMOSData->nDataSize = sizeof(int);
+		pAMOSData->dataBytes = new unsigned char[pAMOSData->nDataSize];
+		pAMOSData->checkSum = CalculateChecksum(pAMOSData);//checksum needs to be recalculated
+	}
 	else if (nDataType == FILE_TRANSFER) {
 		pAMOSData->nPacketType = FILE_TRANSFER;
+		pAMOSData->nDataSize = sizeof(int);
+		pAMOSData->dataBytes = new unsigned char[pAMOSData->nDataSize];
+		pAMOSData->checkSum = CalculateChecksum(pAMOSData);//checksum needs to be recalculated
+	}
+	else if (nDataType == FILE_RECEIVE) {
+		pAMOSData->nPacketType = FILE_RECEIVE;
+		pAMOSData->nDataSize = sizeof(int);
+		pAMOSData->dataBytes = new unsigned char[pAMOSData->nDataSize];
+		pAMOSData->checkSum = CalculateChecksum(pAMOSData);//checksum needs to be recalculated
+	}
+	else if (nDataType == REFRESH_SETTINGS) {
+		pAMOSData->nPacketType = REFRESH_SETTINGS;
 		pAMOSData->nDataSize = sizeof(int);
 		pAMOSData->dataBytes = new unsigned char[pAMOSData->nDataSize];
 		pAMOSData->checkSum = CalculateChecksum(pAMOSData);//checksum needs to be recalculated
@@ -441,4 +473,59 @@ int BoatCommand::fillchunk(unsigned char *chunkBuf,int nChunkID,unsigned char *i
 	//printf("chunkBuf[%d] = %d\n",10+nDataPortionSize,(int)chunkBuf[10+nDataPortionSize]);
 	//end test
 	return 11 + nDataPortionSize;
+}
+
+int BoatCommand::Encrypt(char* destBuf, char* sourceBuf, int nSize) {
+	const char MIN_CHAR = 33;
+	const char MAX_CHAR = 126;
+	int nCharRange = MAX_CHAR - MIN_CHAR;
+	char keyval[128];
+	memset(keyval, 0, 128);
+	strcpy(keyval, (char*)AMOSEN_VAL);
+	int nKeyLength = strlen(keyval);
+	for (int i = 0; i < nSize; i++) {
+		char c = sourceBuf[i];
+		if (sourceBuf[i] >= MIN_CHAR && sourceBuf[i] <= MAX_CHAR) {
+			int nDif = c - MIN_CHAR;
+			int j = i % nKeyLength;
+			int nKeyDif = keyval[j] - MIN_CHAR;
+			int nNewVal = MIN_CHAR + ((nKeyDif + nDif) % nCharRange);
+			destBuf[i] = (char)nNewVal;
+		}
+		else {
+			destBuf[i] = sourceBuf[i];//shouldn't get these sorts of characters, but just in case
+		}
+	}
+	//null terminate
+	destBuf[nSize] = 0;
+	return 0;
+}
+
+int BoatCommand::Decrypt(char* destBuf, char* sourceBuf, int nSize) {
+	const char MIN_CHAR = 33;
+	const char MAX_CHAR = 126;
+	int nCharRange = MAX_CHAR - MIN_CHAR;
+	char keyval[128];
+	memset(keyval, 0, 128);
+	strcpy(keyval, (char*)AMOSEN_VAL);
+	int nKeyLength = strlen(keyval);
+	for (int i = 0; i < nSize; i++) {
+		char c = sourceBuf[i];
+		if (sourceBuf[i] >= MIN_CHAR && sourceBuf[i] <= MAX_CHAR) {
+			int nDif = c - MIN_CHAR;
+			int j = i % nKeyLength;
+			int nKeyDif = keyval[j] - MIN_CHAR;
+			int nNewDif = nDif - nKeyDif;
+			if (nNewDif < 0) {
+				nNewDif += nCharRange;
+			}
+			destBuf[i] = (char)(MIN_CHAR + nNewDif);
+		}
+		else {
+			destBuf[i] = sourceBuf[i];//shouldn't get these sorts of characters, but just in case
+		}
+	}
+	//null terminate
+	destBuf[nSize] = 0;
+	return 0;
 }

@@ -18,6 +18,7 @@
 #include "TempSensor.h"
 #include "LeakSensor.h"
 #include "DiagnosticsSensor.h"
+#include "AtlasDO2Sensor.h"
 #include <fcntl.h>
 #include <vector>
 
@@ -34,6 +35,7 @@ using namespace std;
 #define GPS_LONGITUDE 6  //GPS longitude (in degrees)
 #define LEAK_DATA 7//leak sensor (boolean indication of whether or not a leak has occurred)
 #define DIAGNOSTICS_DATA 8 //general diagnostics values (eg: current draw)
+#define DO2_DATA 9 //dissolved oxygen in water (mg/L)
 
 #define SENSOR_GRID_PAUSETIME_SEC 5 //number of seconds to pause with thrusters off before collecting a sample when doing sensor grid data collection
 
@@ -63,6 +65,7 @@ private:
 	float m_fInteriorTemp;//the temperature of the interior of the boat in degrees C
 	float m_fWaterPH;//the measured pH value of the water
 	float m_fTurbidity;//the turbidity value of the water
+	float m_fDO2;//the dissolved oxygen content in the water (mg/L)
 	float m_fCurrentDraw12V;//the amount of current (in A) coming from the +12V supply
 	float m_fBatteryVoltage;//the measured voltage of the +12V supply
 	float m_fHumidityCPU;//the relative humidity inside the AMOS CPU box (expressed as a percentage from 0 to 100)
@@ -81,6 +84,7 @@ private:
 	char *m_szDataFilePath;//the full path of the file where data will be saved
 
 	//functions
+	AtlasDO2Sensor* GetDO2Sensor();//returns  the dissolved oxygen sensor (if available) or nullptr if not
 	TempSensor *GetWaterTempSensor();//returns the water temperature sensor (if available) or nullptr if not
 	PHSensor *GetPHSensor();//returns the PH sensor (if available) or nullptr if not
 	TurbiditySensor *GetTurbiditySensor();//returns the turbidity sensor (if available) or nullptr if not

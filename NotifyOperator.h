@@ -24,7 +24,7 @@ class NotifyOperator {//class used for notifying operator of a particular condit
 public:
 	NotifyOperator();//constructor
 	~NotifyOperator();//destructor
-	
+	bool ReloadConfigInfo(char* szRootFolder);//reload config info from prefs.txt file
 	bool IssueNotification(char *msgText, char *szSubject, void *pShipLog);//send out text(s) and email(s) to configured recipients
 
 private:

@@ -26,6 +26,7 @@ SensorDataFile::SensorDataFile(int *sensorTypes, int nNumSensors, void *sensorOb
 	m_fHumidityCPU=0;
 	m_fHumidityBattery=0;
 	m_fHumidityTempCPU=0;
+	m_fDO2 = 0;
 	m_fHumidityTempBattery=0;
 	m_fBatteryVoltage=0;
 	m_bSolarCharging = false;
@@ -114,6 +115,9 @@ void SensorDataFile::SetData(int nDataType, double dData) {//sets a particular d
 		else if (nDataType==DIAGNOSTICS_DATA) {
 			m_fCurrentDraw12V = (float)dData;
 		}
+		else if (nDataType == DO2_DATA) {
+			m_fDO2 = (float)dData;
+		}
 	}
 }
 
@@ -144,7 +148,7 @@ char * SensorDataFile::GetFormattedData(struct tm *sampleTime) {//formats the cu
 	char szTmp[32];
 	for (int i=0;i<m_nNumSensors;i++) {
 		if (m_bDataAvailable[i]) {
-			if (m_sensorTypes[i]==WATER_TEMP_DATA||m_sensorTypes[i]==BOAT_INTERIOR_TEMP_DATA) {
+			if (m_sensorTypes[i]==WATER_TEMP_DATA||m_sensorTypes[i]==BOAT_INTERIOR_TEMP_DATA||m_sensorTypes[i]==DO2_DATA) {
 				sprintf(szTmp, "%.2f, ", m_sensorData[i]);
 			}
 			else if (m_sensorTypes[i]==PH_DATA||m_sensorTypes[i]==WATER_TURBIDITY) {
@@ -216,6 +220,9 @@ void SensorDataFile::WriteDataFileHeader() {
 		}
 		else if (m_sensorTypes[i]==LEAK_DATA) {
 			strcpy(szTmp, "Leak, ");
+		}
+		else if (m_sensorTypes[i] == DO2_DATA) {
+			strcpy(szTmp, "Dissolved_O2(mg/L), ");
 		}
 		else if (m_sensorTypes[i]==DIAGNOSTICS_DATA) {
 			char *szDiagnosticsHeader = DiagnosticsSensor::GetSensorFileHeader();
@@ -313,11 +320,11 @@ bool SensorDataFile::SendSensorData(int nSensorType, int nHandle, bool bUseSeria
 	//BOAT_DATA *pBoatData = BoatCommand::CreateBoatData(SUPPORTED_SENSOR_DATA);
 	BOAT_DATA *pBoatData = nullptr;
 	if (nSensorType==WATER_TEMP_DATA) {
-		TempSensor *pWaterSensor = GetWaterTempSensor();
+		TempSensor *pWaterTempSensor = GetWaterTempSensor();
 		//test
-		if (pWaterSensor!=nullptr) {
-			if (pWaterSensor->isOldData()) {
-				if (!pWaterSensor->GetTemperature(m_fWaterTemp)) {
+		if (pWaterTempSensor!=nullptr) {
+			if (pWaterTempSensor->isOldData()) {
+				if (!pWaterTempSensor->GetTemperature(m_fWaterTemp)) {
 					printf("error getting water temp.\n");
 				}
 			}
@@ -346,6 +353,34 @@ bool SensorDataFile::SendSensorData(int nSensorType, int nHandle, bool bUseSeria
 		}
 		pBoatData = BoatCommand::CreateBoatData(WATER_TURBIDITY_DATA_PACKET);
 		memcpy(pBoatData->dataBytes,&m_fTurbidity,sizeof(float));
+	}
+	else if (nSensorType == DO2_DATA) {
+		AtlasDO2Sensor* pDO2Sensor = GetDO2Sensor();
+		if (pDO2Sensor && pDO2Sensor->isOldData()) {
+			TempSensor* pWaterTempSensor = GetWaterTempSensor();
+			double dDO2Data = 0.0;
+			if (pWaterTempSensor != nullptr) {
+				//get temperature compensated DO2
+				if (pWaterTempSensor->isOldData()) {
+					if (!pWaterTempSensor->GetTemperature(m_fWaterTemp)) {
+						printf("error getting water temp.\n");
+					}
+				}
+				if (!pDO2Sensor->GetDO2(dDO2Data, (double)m_fWaterTemp)) {
+					printf("error getting DO2 data.\n");
+				}
+				else m_fDO2 = (float)dDO2Data;
+			}
+			else {
+				//get DO2 without temperatuer compensation
+				if (!pDO2Sensor->GetDO2(dDO2Data)) {
+					printf("error getting DO2 data.\n");
+				}
+				else m_fDO2 = (float)dDO2Data;
+			}
+		}
+		pBoatData = BoatCommand::CreateBoatData(DO2_DATA);
+		memcpy(pBoatData->dataBytes, &m_fDO2, sizeof(float));
 	}
 	else if (nSensorType==LEAK_DATA) {
 		LeakSensor *pLeakSensor = GetLeakSensor();
@@ -459,6 +494,21 @@ TurbiditySensor * SensorDataFile::GetTurbiditySensor() {
 }
 
 /**
+ * @brief returns the dissolved O2 sensor (if available) or nullptr if not
+ *
+ * @return AtlasDO2Sensor* returns the AtlasDO2Sensor object (if available) or nullptr if not
+ */
+AtlasDO2Sensor* SensorDataFile::GetDO2Sensor() {
+	for (int i = 0; i < m_nNumSensors; i++) {
+		if (m_sensorTypes[i] == DO2_DATA) {
+			AtlasDO2Sensor* pDO2Sensor = (AtlasDO2Sensor*)m_sensorObjects[i];
+			return pDO2Sensor;
+		}
+	}
+	return nullptr;
+}
+
+/**
  * @brief returns the leak sensor (if available) or nullptr if not
  * 
  * @return LeakSensor* the LeakSensor object (if available) or nullptr if not
@@ -516,6 +566,7 @@ void SensorDataFile::SetFilename(char * pszFilename) {
  * 
  */
 void SensorDataFile::CollectData() {
+	bool bGotWaterTempData = false;
 	for (int i=0;i<m_nNumSensors;i++) {
 		if (!m_sensorObjects[i]) {
 			continue;
@@ -529,6 +580,7 @@ void SensorDataFile::CollectData() {
 			TempSensor *pTempSensor = (TempSensor *)m_sensorObjects[i];
 			float fWaterTemperature=0;//current water temperature in deg C
 			if (pTempSensor->GetTemperature(fWaterTemperature)) {//get water temperature
+				bGotWaterTempData = true;
 				SetData(WATER_TEMP_DATA, (double)fWaterTemperature);//sets data value for water temperature, data will get saved to file in the next call to SaveData
 			}
 		}
@@ -550,6 +602,20 @@ void SensorDataFile::CollectData() {
 			LeakSensor *pLeakSensor = (LeakSensor *)m_sensorObjects[i];
 			m_bLeak = pLeakSensor->CheckLeakSensors(nullptr);
 			SetData(LEAK_DATA,(double)m_bLeak);
+		}
+		else if (m_sensorTypes[i]==DO2_DATA) {//dissolved O2 sensor data
+			AtlasDO2Sensor* pDO2Sensor = (AtlasDO2Sensor*)m_sensorObjects[i];
+			double dDO2Data = 0.0;//dissolved oxygen conc. in mg/L
+			if (bGotWaterTempData) {
+				if (pDO2Sensor->GetDO2(dDO2Data, (double)m_fWaterTemp)) {
+					SetData(DO2_DATA, dDO2Data);
+				}
+			}
+			else {
+				if (pDO2Sensor->GetDO2(dDO2Data)) {
+					SetData(DO2_DATA, dDO2Data);
+				}
+			}
 		}
 		else if (m_sensorTypes[i]==DIAGNOSTICS_DATA) {//diagnostics data
 			DiagnosticsSensor *pDiagnostics = (DiagnosticsSensor *)m_sensorObjects[i];

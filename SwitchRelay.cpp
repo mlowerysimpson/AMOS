@@ -57,6 +57,11 @@ void SwitchRelay::LoadPreferences(char *szPrefsFilename) {
         m_dMaxAllowedVoltage = DEFAULT_MAX_ALLOWED_VOLTAGE;
         return;
     }
+    if (filedata::getFileLength(szPrefsFilename) <= 0) {
+        //use defaults
+        m_dMaxAllowedVoltage = DEFAULT_MAX_ALLOWED_VOLTAGE;
+        return;
+    }
     filedata prefsFile(szPrefsFilename);
     m_dMaxAllowedVoltage = prefsFile.getDouble("[switchprefs]","max_allowed_voltage");
     m_dFullyChargedVoltage = prefsFile.getDouble("[switchprefs]","fully_charged_voltage");

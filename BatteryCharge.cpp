@@ -132,6 +132,11 @@ void BatteryCharge::LoadPreferences(char *szPrefsFilename) {//load preferences f
         m_bLeadAcidBattery = false;
         return;
     }
+    if (filedata::getFileLength(szPrefsFilename) <= 0) {
+        //use defaults
+        m_bLeadAcidBattery = false;
+        return;
+    }
     filedata prefsFile(szPrefsFilename);
     m_bLeadAcidBattery = (bool)prefsFile.getInteger("[battery]","leadacid");
     if (m_bLeadAcidBattery) {

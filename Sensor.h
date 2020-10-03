@@ -1,7 +1,7 @@
 //sensor class (base class for all types of sensors)
 #pragma once
 
-#include "AToD.h"//requires connection of pH probe to AToD device
+#include "AToD.h"
 
 #define RECENT_THRESHOLD_SEC 10
 

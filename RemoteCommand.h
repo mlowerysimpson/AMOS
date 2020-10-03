@@ -35,14 +35,13 @@
 
 class RemoteCommand {
 public:
-	RemoteCommand(char *rootFolder, int nSocket, Navigation *pNav, Thruster *pThrusters, AToD *pAToD, SensorDataFile *pSensorDataFile, Vision *pVision, pthread_mutex_t *command_mutex, void *pShipLog);//constructor
+	RemoteCommand(char *rootFolder, int nSocket, Navigation *pNav, Thruster *pThrusters, AToD *pAToD, void *pShipLog);//constructor
 	~RemoteCommand();
 	
 	void *m_shipLog;//void pointer to a ship log object
 	Navigation *m_pNav;//object used for navigation
 	unsigned int m_lastNavigationmmandTimeMS;//variable that holds the time in ms when a network command was last sent
 	Thruster *m_thrusters; 
-	pthread_mutex_t *m_command_mutex;//mutex that various command functions use to make sure that no two of them drive the thrusters at the same time
 	double m_latitudeDest;//destination latitude, sent from the remote captain
 	double m_longitudeDest;//destination longitude, sent from the remote captain
 	bool m_bStopDriving;//flag is false if a thread for driving the boat should be active, set to true in order to halt a thread for driving the boat
@@ -64,12 +63,11 @@ private:
 	bool m_bSerportMode;//flag is true when this object is getting commands over a serial port connection (otherwise false if a network (default) connection is being used)
 	pthread_t m_moveForwardThreadId;
 	pthread_t m_moveToLocationThreadId;
-	Vision *m_vision;//object used for handling image capture requests
-	SensorDataFile *m_pSensorDataFile;//object used for saving sensor data
 	AToD *m_pAToD;//object used for handling analog to digital conversions and data
 	int m_nSocket;//network socket identifier or serial port file descriptor if in serial port mode (i.e. m_bSerportMode==true)
 	
 	//functions
+	bool RefreshSettings(int nSettingsType);//refresh settings of a particular type (see CommandList.h) from the current contents of the prefs.txt file
 	void CopyPacketToBuf(unsigned char* inBuf, int nBufferStartIndex, int nBufSize, char* destBuf);//copy the data portion of inBuf to destBuf
 	int CheckPacket(unsigned char* inBuf, int nBufSize, int nChunkIndex, int& nMoreBytesRequired, int& nPacketStartIndex);//check to see if a chunk of data is valid or not
 	int ReceiveLargeDataChunk(int nSocket, char* rxBytes, int nNumToReceive);//tries to receive a large chunk of data over a serial port connection

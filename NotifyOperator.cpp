@@ -371,3 +371,107 @@ bool NotifyOperator::LoadConfigInfo() {//load configuration data from prefs.txt 
 	prefsFile.getString((char *)"[email_prefs]",(char *)"server_name",&m_mailServerName);
 	return true;
 }
+
+bool NotifyOperator::ReloadConfigInfo(char* szRootFolder) {//reload config info from prefs.txt file
+	char prefsFilename[PATH_MAX];
+	sprintf(prefsFilename, (char*)"%s//prefs.txt", szRootFolder);
+	if (filedata::getFileLength(prefsFilename) <= 0) {
+		//prefs.txt configuration file does not exist or is empty
+		return false;
+	}
+	filedata prefsFile(prefsFilename);
+	//texting parameters
+	m_bSendText = (bool)prefsFile.getInteger((char*)"[text_prefs]", (char*)"send_text");//flag is true if texts should be sent
+	if (m_twilio_account_sid != NULL) {
+		delete[]m_twilio_account_sid;
+		m_twilio_account_sid = NULL;
+	}
+	prefsFile.getString((char*)"[text_prefs]", (char*)"twilio_account_sid", &m_twilio_account_sid);
+
+	if (m_twilio_auth_token!=NULL) {
+		delete[]m_twilio_auth_token;
+		m_twilio_auth_token = NULL;
+	}
+	prefsFile.getString((char*)"[text_prefs]", (char*)"twilio_auth_token", &m_twilio_auth_token);
+
+	//list of phone numbers to send text messages to
+	int nNumToNumbers = m_toNumbers.size();
+	for (int i = 0; i < nNumToNumbers; i++) {
+		if (m_toNumbers[i]) {
+			delete[]m_toNumbers[i];
+			m_toNumbers[i] = nullptr;
+		}
+	}
+	m_toNumbers.clear();
+	char szPhoneNumLabel[32];
+	int nCount = 0;
+	sprintf(szPhoneNumLabel, "phone_num_%03d", (nCount + 1));
+	while (prefsFile.FindString((char*)"[text_prefs]", szPhoneNumLabel) >= 0) {
+		char* szPhoneNumber = NULL;
+		prefsFile.getString((char*)"[text_prefs]", szPhoneNumLabel, &szPhoneNumber);
+		if (szPhoneNumber) {
+			m_toNumbers.push_back(szPhoneNumber);
+		}
+		nCount++;
+		sprintf(szPhoneNumLabel, "phone_num_%03d", (nCount + 1));
+	}
+
+	//the Twilio assigned phone # for sending text messages
+	if (m_fromNumber != NULL) {
+		delete[] m_fromNumber;
+		m_fromNumber = NULL;
+	}
+	prefsFile.getString((char*)"[text_prefs]", (char*)"from_number", &m_fromNumber);
+
+	//email parameters
+	m_bSendEmail = (bool)prefsFile.getInteger((char*)"[email_prefs]", (char*)"send_email");//flag is true if email should be sent
+	//where the email is from
+	if (m_fromAddr != NULL) {
+		delete[] m_fromAddr;
+		m_fromAddr = NULL;
+	}
+	prefsFile.getString((char*)"[email_prefs]", (char*)"from_addr", &m_fromAddr);
+
+	//list of email addresses that we are sending messages to
+	int nNumEmailAddressees = m_emailAddressees.size();
+	for (int i = 0; i < nNumEmailAddressees; i++) {
+		if (m_emailAddressees[i] != NULL) {
+			delete[] m_emailAddressees[i];
+			m_emailAddressees[i] = NULL;
+		}
+	}
+	nCount = 0;
+	char szEmailLabel[32];
+	sprintf(szEmailLabel, "email_addr_%03d", (nCount + 1));
+	while (prefsFile.FindString((char*)"[email_prefs]", szEmailLabel) >= 0) {
+		char* szEmailAddr = NULL;
+		prefsFile.getString((char*)"[email_prefs]", szEmailLabel, &szEmailAddr);
+		if (szEmailAddr) {
+			m_emailAddressees.push_back(szEmailAddr);
+		}
+		nCount++;
+		sprintf(szEmailLabel, "email_addr_%03d", (nCount + 1));
+	}
+
+	//username for the email account that is sending the email
+	if (m_emailUsername != NULL) {
+		delete[] m_emailUsername;
+		m_emailUsername = NULL;
+	}
+	prefsFile.getString((char*)"[email_prefs]", (char*)"user_name", &m_emailUsername);
+	//password for the email account that is sending the email
+	if (m_emailPassword != NULL) {
+		delete[] m_emailPassword;
+		m_emailPassword = NULL;
+	}
+	prefsFile.getString((char*)"[email_prefs]", (char*)"password", &m_emailPassword);
+	//the port number used by the mailserver
+	m_nMailServerPortNumber = prefsFile.getInteger((char*)"[email_prefs]", (char*)"port_number");
+	//the name of the mailserver
+	if (m_mailServerName != NULL) {
+		delete[] m_mailServerName;
+		m_mailServerName = NULL;
+	}
+	prefsFile.getString((char*)"[email_prefs]", (char*)"server_name", &m_mailServerName);
+	return true;
+}

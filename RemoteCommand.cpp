@@ -1,6 +1,7 @@
 //RemoteCommand.cpp
 #include "RemoteCommand.h"
 #include "FileCommands.h"
+#include "filedata.h"
 #include "DiagnosticsSensor.h"
 #include <string.h>
 #include <unistd.h>
@@ -15,7 +16,13 @@ extern SensorDataFile* g_sensorDataFile;//object used for logging sensor data to
 extern LIDARLite* g_lidar;//object used for getting distance measurements to objects using LIDAR Lite
 extern bool g_bCancelFunctions;//boolean flag is set to true, typically when program is ending. It is polled by various functions (ex: navigation functions) that sometimes take a long time to complete
 extern void StartFileCommandsThread();//start thread for executing commands from a text file
+extern bool GetDataLoggingPreferences();//get preferences from prefs.txt file.
 extern DiagnosticsSensor* g_shipdiagnostics;//interface for ship monitoring, power control, etc.
+extern NotifyOperator g_notifier;//used for notifying one or more people by email or text of the boat's condition
+extern pthread_mutex_t g_remoteCommandsMutex;//mutex for making sure remote commands do not interfere with one another
+extern Vision g_vision;//object used for taking pictures with camera(s)
+extern bool g_bExitFileCommandsThread;//boolean flag used to control when the file commands thread should exit
+extern bool g_bFileCommandsThreadRunning;//boolean flag is true when the file commands thread is running
 
 
 void *driveForwardThread(void *pParam) {//function drives boat forward at its current heading and speed
@@ -34,7 +41,7 @@ void *driveToLocationThread(void *pParam) {//function drives boat to a particula
 	RemoteCommand *pRC = (RemoteCommand *)pParam;
 	pRC->m_bStopDriving = false;
 	pRC->m_bDrivingThreadRunning = true;
-	pRC->m_pNav->DriveToLocation(pRC->m_latitudeDest,pRC->m_longitudeDest,(void *)pRC->m_thrusters,pRC->m_command_mutex,&pRC->m_lastNavigationmmandTimeMS, pRC->m_shipLog, 10,&pRC->m_bStopDriving,HIGH_PRIORITY);//higher priority since command was explicity issued by user using app
+	pRC->m_pNav->DriveToLocation(pRC->m_latitudeDest,pRC->m_longitudeDest,(void *)pRC->m_thrusters,&g_remoteCommandsMutex,&pRC->m_lastNavigationmmandTimeMS, pRC->m_shipLog, 10,&pRC->m_bStopDriving,HIGH_PRIORITY);//higher priority since command was explicity issued by user using app
 	pRC->m_bDrivingThreadRunning = false;
 	return 0;
 }
@@ -44,24 +51,20 @@ void *driveToLocationThread(void *pParam) {//function drives boat to a particula
 //nSocket = network socket descriptor (socket descriptor from accepted network connection)
 //pNav = pointer to navigation object used for getting GPS and compass data and plotting routes
 //pThrusters = pointer to Thruster object that controls power to the propeller(s)
-//pVision = pointer to a Vision object for controling access to the camera and performing obstacle avoidance routines
-//command_mutex = pointer to mutex that is used to make sure that 2 commands do not try to access the thrusters at the same time
+//pAToD = pointer to object used for handling analog to digital measurements
 //pShipLog = void pointer to ShipLog object for logging various data and debugging info to file
-RemoteCommand::RemoteCommand(char *szRootFolder, int nSocket, Navigation *pNav, Thruster *pThrusters, AToD *pAToD, SensorDataFile *pSensorDataFile, Vision *pVision, pthread_mutex_t *command_mutex, void *pShipLog) {
+RemoteCommand::RemoteCommand(char *szRootFolder, int nSocket, Navigation *pNav, Thruster *pThrusters, AToD *pAToD, void *pShipLog) {
 	m_szRootFolder = szRootFolder;
 	m_lastNavigationmmandTimeMS=0;
 	m_bSerportMode = false;
 	m_shipLog = pShipLog;
-	m_command_mutex = command_mutex;
 	m_bDrivingThreadRunning=false;
 	m_bStopDriving=false;
 	m_nSocket = nSocket;
-	m_vision = pVision;
 	m_nLastError = 0;
 	m_thrusters=pThrusters;
 	m_pNav = pNav;
 	m_pAToD = pAToD;
-	m_pSensorDataFile = pSensorDataFile;
 	m_fMoveForwardDirection=0;
 	m_fMoveForwardSpeed=0;
 	m_fTurnRate=0;
@@ -113,7 +116,13 @@ REMOTE_COMMAND * RemoteCommand::GetNetworkCommand() {
 	REMOTE_COMMAND *pCommandReceived = new REMOTE_COMMAND;
 	memset(pCommandReceived,0,sizeof(REMOTE_COMMAND));
 	pCommandReceived->nCommand = nCommand;
+	//test
+	printf("nCommand = %d\n", nCommand);
+	//end test
 	if (requiresMoreData(nCommand)) {
+		//test
+		printf("Requires more data...\n");
+		//end test
 		unsigned char dataSizeBytes[4];
 		nNumRead = read(m_nSocket, dataSizeBytes, 4);
 		if (nNumRead<4) {
@@ -143,6 +152,9 @@ REMOTE_COMMAND * RemoteCommand::GetNetworkCommand() {
 	}
 	//send confirmation back to remote client that command was successfully received
 	//just echo back commandBuf bytes	
+	//test
+	printf("About to send confirmation...\n");
+	//end test
 	if (send(m_nSocket, (char *)commandBuf, 4, 0)<0) {
 		m_nLastError = ERROR_SENDING_DATA;
 		//test
@@ -179,7 +191,9 @@ bool RemoteCommand::requiresMoreData(int nCommand) {
 	else if (nCommand == SCRIPT_STEP_CHANGE) return true;
 	else if (nCommand == USE_REMOTE_SCRIPT) return true;
 	else if (nCommand == FILE_TRANSFER) return true;
+	else if (nCommand == FILE_RECEIVE) return true;
 	else if (nCommand == USE_REMOTE_SCRIPT) return true;
+	else if (nCommand == REFRESH_SETTINGS) return true;
 	return false;
 }
 
@@ -233,16 +247,16 @@ char * RemoteCommand::GetCommandDescription(REMOTE_COMMAND *pCommand) {//return 
  * @return true if the command was executed successfully
  * @return false if there was a problem executing the command
  */
-bool RemoteCommand::ExecuteCommand(REMOTE_COMMAND *pCommand, bool bUseSerial) {//execute a particular command
+bool RemoteCommand::ExecuteCommand(REMOTE_COMMAND* pCommand, bool bUseSerial) {//execute a particular command
 	if (!pCommand) return false;
-	if (pCommand->nCommand==THRUST_ON) {
+	if (pCommand->nCommand == THRUST_ON) {
 		m_lastNavigationmmandTimeMS = millis();
 		ExitMoveThreads();
 		//command to turn one or both thrusters on 
-		PROPELLER_STATE *pPropState = (PROPELLER_STATE *)pCommand->pDataBytes;
+		PROPELLER_STATE* pPropState = (PROPELLER_STATE*)pCommand->pDataBytes;
 		m_thrusters->SetAirPropSpeedAndRudderAngle(pPropState->fPropSpeed, pPropState->fRudderAngle);
 	}
-	else if (pCommand->nCommand==GPS_DATA_PACKET) {
+	else if (pCommand->nCommand == GPS_DATA_PACKET) {
 		//test
 		printf("GPS command...\n");
 		//end test
@@ -253,91 +267,88 @@ bool RemoteCommand::ExecuteCommand(REMOTE_COMMAND *pCommand, bool bUseSerial) {/
 			return false;
 		}
 	}
-	else if (pCommand->nCommand==COMPASS_DATA_PACKET) {
+	else if (pCommand->nCommand == COMPASS_DATA_PACKET) {
 		if (!m_pNav->SendCompassData(m_nSocket, bUseSerial)) {
 			return false;
 		}
 	}
-	else if (pCommand->nCommand==BATTVOLTAGE_DATA_PACKET) {
+	else if (pCommand->nCommand == BATTVOLTAGE_DATA_PACKET) {
 		if (!m_pAToD->SendBatteryVoltage(m_nSocket, bUseSerial)) {
 			return false;
 		}
 	}
-	else if (pCommand->nCommand==SUPPORTED_SENSOR_DATA) {
-		if (!m_pSensorDataFile) return false;
-		if (!m_pSensorDataFile->SendNumSensors(m_nSocket, bUseSerial)) {//send # of sensors
+	else if (pCommand->nCommand == SUPPORTED_SENSOR_DATA) {
+		if (!g_sensorDataFile) return false;
+		if (!g_sensorDataFile->SendNumSensors(m_nSocket, bUseSerial)) {//send # of sensors
 			return false;
 		}
-		if (!m_pSensorDataFile->SendSensorTypes(m_nSocket, bUseSerial)) {//send sensor types
-			return false;
-		}
-	}
-	else if (pCommand->nCommand==WATER_TEMP_DATA_PACKET) {
-		if (!m_pSensorDataFile) return false;
-		if (!m_pSensorDataFile->SendSensorData(WATER_TEMP_DATA,m_nSocket, bUseSerial)) {//send water temperature
+		if (!g_sensorDataFile->SendSensorTypes(m_nSocket, bUseSerial)) {//send sensor types
 			return false;
 		}
 	}
-	else if (pCommand->nCommand==WATER_PH_DATA_PACKET) {
-		if (!m_pSensorDataFile) return false;
-		if (!m_pSensorDataFile->SendSensorData(PH_DATA, m_nSocket, bUseSerial)) {//send water temperature
+	else if (pCommand->nCommand == WATER_TEMP_DATA_PACKET) {
+		if (!g_sensorDataFile) return false;
+		if (!g_sensorDataFile->SendSensorData(WATER_TEMP_DATA, m_nSocket, bUseSerial)) {//send water temperature
 			return false;
 		}
 	}
-	else if (pCommand->nCommand==WATER_TURBIDITY_DATA_PACKET) {
-		if (!m_pSensorDataFile) return false;
-		if (!m_pSensorDataFile->SendSensorData(WATER_TURBIDITY, m_nSocket, bUseSerial)) {//send water temperature
+	else if (pCommand->nCommand == WATER_PH_DATA_PACKET) {
+		if (!g_sensorDataFile) return false;
+		if (!g_sensorDataFile->SendSensorData(PH_DATA, m_nSocket, bUseSerial)) {//send water temperature
 			return false;
 		}
 	}
-	else if (pCommand->nCommand==VIDEO_DATA_PACKET) {//capture frame of video and send captured image data over network connection
-		if (!m_vision) {
-			m_vision = new Vision();
+	else if (pCommand->nCommand == WATER_TURBIDITY_DATA_PACKET) {
+		if (!g_sensorDataFile) return false;
+		if (!g_sensorDataFile->SendSensorData(WATER_TURBIDITY, m_nSocket, bUseSerial)) {//send water temperature
+			return false;
 		}
+	}
+	else if (pCommand->nCommand == VIDEO_DATA_PACKET) {//capture frame of video and send captured image data over network connection
 		int nThresholdInfo = 0;//value relates to image detection as follows:
 		//2nd most significant byte is 0 for Canny Edge detection or 1 for fast feature detection
 		//least significant byte is the low threshold for Canny Edge detection or the feature threshold for fast feature detection
 		//2nd least significant byte is the high threshold for Canny Edge detection or zero for fast feature detection
-		memcpy(&nThresholdInfo,pCommand->pDataBytes,sizeof(int));
-		if (!m_vision->CaptureFrame(nThresholdInfo,(char *)"framecap.jpg")) {
+		memcpy(&nThresholdInfo, pCommand->pDataBytes, sizeof(int));
+		if (!g_vision.CaptureFrame(nThresholdInfo, (char*)"framecap.jpg")) {
 			printf("Error capturing video frame.\n");
 			return false;
 		}
-		void *pDiagSensor = nullptr;
-		if (m_pSensorDataFile!=nullptr) {
-			pDiagSensor = (void *)m_pSensorDataFile->GetDiagnosticsSensor();
+		void* pDiagSensor = nullptr;
+		if (g_sensorDataFile != nullptr) {
+			pDiagSensor = (void*)g_sensorDataFile->GetDiagnosticsSensor();
 		}
-		if (!m_vision->SendCapturedImage(m_nSocket, bUseSerial, (char *)"framecap.jpg", pDiagSensor)) {
+		if (!g_vision.SendCapturedImage(m_nSocket, bUseSerial, (char*)"framecap.jpg", pDiagSensor)) {
 			printf("Error sending captured video frame.\n");
 			return false;
 		}
 	}
-	else if (pCommand->nCommand==GPS_DESTINATION_PACKET) {//command to go to a particular GPS destination
+	else if (pCommand->nCommand == GPS_DESTINATION_PACKET) {//command to go to a particular GPS destination
 		ExitMoveThreads();
 		m_lastNavigationmmandTimeMS = millis();
-		m_latitudeDest=0.0, m_longitudeDest=0.0;
-		memcpy(&m_latitudeDest,pCommand->pDataBytes,sizeof(double));
-		memcpy(&m_longitudeDest,&pCommand->pDataBytes[8],sizeof(double));
+		m_latitudeDest = 0.0, m_longitudeDest = 0.0;
+		memcpy(&m_latitudeDest, pCommand->pDataBytes, sizeof(double));
+		memcpy(&m_longitudeDest, &pCommand->pDataBytes[8], sizeof(double));
 		MoveToLocationThread();
 	}
-	else if (pCommand->nCommand==CANCEL_OPERATION) {//command to cancel the current operation has been sent
+	else if (pCommand->nCommand == CANCEL_OPERATION) {//command to cancel the current operation has been sent
 		//just end any of the active "move" threads for moving in a certain direction or to a certain destination
 		ExitMoveThreads();
 	}
-	else if (pCommand->nCommand==LEAK_DATA_PACKET) {
-		if (!m_pSensorDataFile) return false;
-		if (!m_pSensorDataFile->SendSensorData(LEAK_DATA,m_nSocket,bUseSerial)) {//send leak sensor data
+	else if (pCommand->nCommand == LEAK_DATA_PACKET) {
+		if (!g_sensorDataFile) return false;
+		if (!g_sensorDataFile->SendSensorData(LEAK_DATA, m_nSocket, bUseSerial)) {//send leak sensor data
 			return false;
 		}
 	}
-	else if (pCommand->nCommand==DIAGNOSTICS_DATA_PACKET) {
-		if (!m_pSensorDataFile) return false;
-		if (!m_pSensorDataFile->SendSensorData(DIAGNOSTICS_DATA, m_nSocket, bUseSerial)) {//send diagnostics data
+	else if (pCommand->nCommand == DIAGNOSTICS_DATA_PACKET) {
+		if (!g_sensorDataFile) return false;
+		if (!g_sensorDataFile->SendSensorData(DIAGNOSTICS_DATA, m_nSocket, bUseSerial)) {//send diagnostics data
 			return false;
 		}
 	}
 	else if (pCommand->nCommand == SCRIPT_STATUS_PACKET) {
-		return FileCommands::SendRemoteScriptInfo(g_fileCommands,m_nSocket,bUseSerial);//send info about the current file script (if any) that is running
+		return FileCommands::SendRemoteScriptInfo(g_fileCommands, m_nSocket, bUseSerial);//send info about the current file script (if any) that is running
 	}
 	else if (pCommand->nCommand == SCRIPT_STEP_CHANGE) {
 		int nStepChange = 0;//the change in the step # of the currently running script
@@ -351,6 +362,17 @@ bool RemoteCommand::ExecuteCommand(REMOTE_COMMAND *pCommand, bool bUseSerial) {/
 	else if (pCommand->nCommand == LIST_REMOTE_SCRIPTS) {
 		return FileCommands::ListRemoteScriptsAvailable(m_szRootFolder, m_nSocket, bUseSerial);//return a list of all of the file scripts available in the root program folder
 	}
+	else if (pCommand->nCommand == LIST_REMOTE_DATA) {
+		return FileCommands::ListRemoteDataAvailable(m_szRootFolder, m_nSocket, bUseSerial);//return a list of all of the data files available in the root program folder
+	}
+	else if (pCommand->nCommand == LIST_REMOTE_LOG) {
+		return FileCommands::ListRemoteLogsAvailable(m_szRootFolder, m_nSocket, bUseSerial);//return a list of all of the log files available in the root program folder
+	}
+	else if (pCommand->nCommand == LIST_REMOTE_IMAGE) {
+		char imageFolder[PATH_MAX];//folder where images are stored
+		sprintf(imageFolder, "%s/Images", m_szRootFolder);
+		return FileCommands::ListRemoteImageAvailable(imageFolder, m_nSocket, bUseSerial);//return a list of all of the image files available in the Images subfolder
+	}
 	else if (pCommand->nCommand == USE_REMOTE_SCRIPT) {//instruction to change the current file script
 		int MAX_NAME_LENGTH = 256;//maximum length of remote script filename
 		int nRemoteScriptNameLength = 0;//the length (in characters) of the script that AMOS should switch to
@@ -358,41 +380,55 @@ bool RemoteCommand::ExecuteCommand(REMOTE_COMMAND *pCommand, bool bUseSerial) {/
 		if (nRemoteScriptNameLength > MAX_NAME_LENGTH) {
 			nRemoteScriptNameLength = MAX_NAME_LENGTH;
 		}
+		if (g_fileCommands != nullptr) {
+			g_fileCommands->CancelCurrentOperation();//cancel the current step (if there is one in progress)
+		}
 		char* szScriptName = new char[nRemoteScriptNameLength + 1];
 		memcpy(szScriptName, &pCommand->pDataBytes[sizeof(int)], nRemoteScriptNameLength);
 		szScriptName[nRemoteScriptNameLength] = 0;//null terminate filename string
-
+		if (nRemoteScriptNameLength == 0) {
+			//need to stop the script that is currently running
+			g_bExitFileCommandsThread = true;
+			unsigned int uiTimeoutTime = millis() + 3000;
+			while (g_bFileCommandsThreadRunning&&millis()<uiTimeoutTime) {
+				usleep(100000);//pause for 100 ms
+			}
+			if (g_fileCommands != nullptr) {
+				delete g_fileCommands;
+				g_fileCommands = nullptr;
+			}
+		}
 		bool bRetval = true;
-		if (g_fileCommands!=nullptr) {
+		if (g_fileCommands != nullptr) {
 			//test
 			printf("Changing to script: %s\n", szScriptName);
 			//end test
 			bRetval = g_fileCommands->ChangeToFile(szScriptName);
 		}
 		else {
-			g_fileCommands = new FileCommands(m_szRootFolder, szScriptName, this->m_pNav, g_thrusters, g_sensorDataFile, g_lidar, &g_bCancelFunctions);
+			g_fileCommands = new FileCommands(m_szRootFolder, szScriptName, this->m_pNav, g_thrusters, &g_bCancelFunctions);
 			StartFileCommandsThread();
 		}
 		delete[] szScriptName;
 		return bRetval;
 	}
 	else if (pCommand->nCommand == FILE_TRANSFER) {
+		int nSizeToDownload = (int)GetUIntFromBytes(pCommand->pDataBytes);
+		//test
+		printf("nSizeToDownload = %d\n", nSizeToDownload);
+		//end test
+		if (nSizeToDownload > 100000000) {
+			//don't try to receive anything > 100 MBytes!
+			printf("file size is too large!");
+			return false;
+		}
+		unsigned char* downloadedBytes = new unsigned char[nSizeToDownload];
 		if (this->m_bSerportMode) {
-			int nSizeToDownload = (int)GetUIntFromBytes(pCommand->pDataBytes);
-			//test
-			printf("nSizeToDownload = %d\n", nSizeToDownload);
-			//end test
-			if (nSizeToDownload>100000000) {
-				//don't try to receive anything > 100 MBytes!
-				printf("file size is too large!");
-				return false;
-			}
-			unsigned char* downloadedBytes = new unsigned char[nSizeToDownload];
-			if (ReceiveLargeDataChunk(m_nSocket, (char *)downloadedBytes, nSizeToDownload)) {
+			if (ReceiveLargeDataChunk(m_nSocket, (char*)downloadedBytes, nSizeToDownload)) {
 				int nOutputPathSize = (int)GetUIntFromBytes(downloadedBytes);
 				int nFileSize = nSizeToDownload - nOutputPathSize - sizeof(int);
-				if (nFileSize > 0&&nOutputPathSize>0) {
-					char* destPath = new char[nOutputPathSize+1];
+				if (nFileSize > 0 && nOutputPathSize > 0) {
+					char* destPath = new char[nOutputPathSize + 1];
 					memcpy(destPath, &downloadedBytes[sizeof(int) + nFileSize], nOutputPathSize);
 					destPath[nOutputPathSize] = 0;//null terminate path string
 					bool bRetval = false;
@@ -410,10 +446,132 @@ bool RemoteCommand::ExecuteCommand(REMOTE_COMMAND *pCommand, bool bUseSerial) {/
 			delete[]downloadedBytes;
 		}
 		else {//TODO: network mode impementation
-		
+			const int MAX_ALLOWED_TIMEOUTS = 5;
+			int nNumRemaining = nSizeToDownload;
+			int nNumReceived = 0;
+			int nTimeoutCount = 0;
+			do {
+				int nRX = read(m_nSocket, &downloadedBytes[nNumReceived], nNumRemaining);
+				if (nRX > 0) {
+					nNumRemaining -= nRX;
+					nNumReceived += nRX;
+					nTimeoutCount = 0;
+				}
+				else {//timeout or error occurred
+					nTimeoutCount++;
+				}
+			} while (nNumRemaining > 0 && nTimeoutCount < MAX_ALLOWED_TIMEOUTS);
+			if (nNumReceived < nSizeToDownload) {
+				printf("timed out, read %d of %d bytes.\n", nNumReceived, nSizeToDownload);
+				delete[]downloadedBytes;
+				return false;
+			}
+			int nOutputPathSize = (int)GetUIntFromBytes(downloadedBytes);
+			int nFileSize = nSizeToDownload - nOutputPathSize - sizeof(int);
+			if (nFileSize > 0 && nOutputPathSize > 0) {
+				char* destPath = new char[nOutputPathSize + 1];
+				memcpy(destPath, &downloadedBytes[sizeof(int) + nFileSize], nOutputPathSize);
+				destPath[nOutputPathSize] = 0;//null terminate path string
+				bool bRetval = false;
+				FILE* outputFile = fopen(destPath, "w");//open for writing (or overwriting if it already exists)
+				if (outputFile != NULL) {
+					int nNumWritten = fwrite(&downloadedBytes[sizeof(int)], 1, nFileSize, outputFile);
+					bRetval = (nNumWritten == nFileSize);
+					fclose(outputFile);
+				}
+				delete[]destPath;
+				delete[]downloadedBytes;
+				return bRetval;
+			}
 		}
 		return false;
 	}
+	else if (pCommand->nCommand == FILE_RECEIVE) {
+		int nFilenameLength = (int)GetUIntFromBytes(pCommand->pDataBytes);
+		//test
+		printf("nFilenameLength = %d\n", nFilenameLength);
+		//end test
+		if (nFilenameLength > 256) {
+			//filename is too long!
+			printf("file name is too long!");
+			return false;
+		}
+		char* fileNameBytes = new char[nFilenameLength+1];
+		if (this->m_bSerportMode) {
+			unsigned int uiTimeoutTime = millis() + 5000;//allow for a 5 second timeout (shouldn't take that long!)
+			int nNumBytesAvail = serialDataAvail(m_nSocket);
+			int nNumRead = 0;
+			while (nNumRead < nFilenameLength && millis() < uiTimeoutTime) {
+				if (nNumBytesAvail > 0) {
+					for (int i = 0; i < nNumBytesAvail; i++) {
+						fileNameBytes[nNumRead] = serialGetchar(m_nSocket);
+						nNumRead++;
+					}
+				}
+				nNumBytesAvail = serialDataAvail(m_nSocket);
+			}
+			if (nNumRead < nFilenameLength) {
+				printf("Timed out trying to read in filename. %d of %d bytes read.\n", nNumRead, nFilenameLength);
+				delete[]fileNameBytes;
+				return false;
+			}
+		}
+		else {
+			//receive filename over network socket
+			int nFileLength = filedata::getFileLength(fileNameBytes);//Finds the length of an opened file stream in bytes
+			int nNumRead = read(m_nSocket, fileNameBytes, nFilenameLength);
+			if (nNumRead < nFilenameLength) {
+				printf("Timed out trying to read in filename. %d of %d bytes read.\n", nNumRead, nFilenameLength);
+				delete[]fileNameBytes;
+				return false;
+			}
+		}
+		fileNameBytes[nFilenameLength] = 0;//null terminate filename
+		int nFileSize = filedata::getFileLength(fileNameBytes);
+		if (nFileSize<=0) {
+			printf("Error, unable to open file: %s\n", fileNameBytes);
+			delete[]fileNameBytes;
+			return false;
+		}
+		FILE* localFile = fopen(fileNameBytes, "rb");
+		delete[]fileNameBytes;
+		unsigned char* fileBytes = new unsigned char[nFileSize];
+		fread(fileBytes, 1, nFileSize, localFile);
+		fclose(localFile);
+		//create and send BOAT_DATA structure for sending the file
+		BOAT_DATA* pBoatData = BoatCommand::CreateBoatData(FILE_RECEIVE);
+		memcpy(pBoatData->dataBytes, &nFileSize, sizeof(int));
+		pBoatData->checkSum = BoatCommand::CalculateChecksum(pBoatData);//calculate simple 8-bit checksum for BOAT_DATA structure
+		if (!BoatCommand::SendBoatData(m_nSocket, bUseSerial, pBoatData, nullptr)) {
+			delete pBoatData;
+			delete[] fileBytes;
+			return false;
+		}
+		//send out actual file bytes
+		if (bUseSerial) {//using serial port link
+			if (!BoatCommand::SendLargeSerialData(m_nSocket, (unsigned char*)fileBytes, nFileSize, nullptr)) {//send large amount of data out serial port, need to get confirmation after sending each chunk
+				delete pBoatData;
+				delete[] fileBytes;
+				return false;
+			}
+		}
+		else {//using network link
+			if (send(m_nSocket, fileBytes, nFileSize, 0) < 0) {
+				//error sending data
+				delete pBoatData;
+				delete[] fileBytes;
+				return false;
+			}
+		}
+		delete pBoatData;
+		delete[] fileBytes;
+		return true;
+	}
+	else if (pCommand->nCommand == REFRESH_SETTINGS) {
+		int nSettingsType = (int)GetUIntFromBytes(pCommand->pDataBytes);
+		return RefreshSettings(nSettingsType);
+	}
+
 	return true;
 }
 
@@ -822,4 +980,21 @@ void RemoteCommand::SendCancelBytes(int nSocket) {//send four 0x0a bytes out ser
 	for (int i = 0; i < 4; i++) {
 		serialPutchar(nSocket, outBuf[i]);
 	}
+}
+
+bool RemoteCommand::RefreshSettings(int nSettingsType) {//refresh settings of a particular type (see CommandList.h) from the current contents of the prefs.txt file
+	//open prefs.txt file to get settings from it
+	//#define AMOS_ALARM_SETTINGS 1
+	//#define AMOS_LIDAR_SETTINGS 2
+	//#define AMOS_SENSOR_SETTINGS 3
+	//#define AMOS_CAMERA_SETTINGS 4
+	//#define AMOS_BATTERY_SETTINGS 5
+	
+	if (nSettingsType == AMOS_ALARM_SETTINGS) {
+		return g_notifier.ReloadConfigInfo(m_szRootFolder);
+	}
+	else if (nSettingsType == AMOS_SENSOR_SETTINGS||nSettingsType==AMOS_CAMERA_SETTINGS) {
+		return GetDataLoggingPreferences();
+	}
+	return false;
 }
