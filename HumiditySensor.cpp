@@ -151,7 +151,8 @@ bool HumiditySensor::CollectDHT22RawData(unsigned short *data, int nLocation) {
 	else {
 		return false;//unknown location
 	}
-    while (1)
+	unsigned int uiTimeoutTime = millis() + 100;//timeout after 100 ms
+    while (millis()<uiTimeoutTime)
 	{
 		// Count only HIGH signal
 		while (digitalRead(nPin) == HIGH)
@@ -215,7 +216,7 @@ bool HumiditySensor::CollectDHT22RawData(unsigned short *data, int nLocation) {
 			val_counter = 0;
 		}
 	}      
-    return false;//should not actually get here
+    return false;//timeout
 }
 
 /**
@@ -243,7 +244,6 @@ bool HumiditySensor::CollectHumidityData(int nLocation) {
 	delay(20);					// Stay LOW for 5~30 milliseconds
 	digitalWrite(nPin, HIGH);
 	pinMode(nPin, INPUT);		// 'INPUT' equals 'HIGH' level. And signal read mode
-
     if (CollectDHT22RawData(data, nLocation)) {
 		// The sum is maybe over 8 bit like this: '0001 0101 1010'.
 		// Remove the '9 bit' data using AND operator.
@@ -284,7 +284,6 @@ bool HumiditySensor::CollectHumidityData(int nLocation) {
 			pthread_mutex_unlock(&m_threadMutex);
 		}
 		else {
-			//printf("[x_x] Invalid Data.\n\n");
 			return false;
 		}
 		if (nLocation==CPUBOX) {
@@ -295,7 +294,7 @@ bool HumiditySensor::CollectHumidityData(int nLocation) {
 		}
 		return true;
 	}
-    return false;
+	return false;
 }
 
 bool HumiditySensor::gotValidData(int nLocation) {//return true if at least one sample of valid temperature / humidity data has been obtained for this location
