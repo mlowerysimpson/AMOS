@@ -29,6 +29,7 @@ public:
 
 private:
     //data
+    bool m_bSentActivityBurst;//true if an activity burst has been sent out the ACTIVITY_PIN, indicating that the program is shutting down
     unsigned int m_uiLastActivityPulseTime;//time in ms of the last activity pulse sent out
     int m_nActivityState;//set to 0 or 1 depending on the desired state (low or high) of the activity output pin (ACTIVITY_PIN)
     HumiditySensor m_humiditySensor;//used for getting relative humidity and temperature data from a DHT22 sensor located inside the main Pi compartment of AMOS.

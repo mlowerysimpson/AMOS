@@ -5,9 +5,10 @@
 //list of possible commands and data types
 #define THRUST_ON 0//turn one or both propellers on at defined speed and direction
 #define THRUST_OFF 1//turn both propellers off
-#define CPU_TEMP_PACKET 2//temperature of the Compute Module chip data packet
+#define DO2_DATA_PACKET 2//dissolved oxygen data packet
 #define COMPASS_DATA_PACKET 3//compass / tilt data packet
 #define GPS_DATA_PACKET 4//GPS data packet
+#define CONDUCTIVITY_DATA_PACKET 5//conductivity data packet
 #define BATTVOLTAGE_DATA_PACKET 11//battery voltage data packet
 #define SUPPORTED_SENSOR_DATA 12//find out what types of sensor data the boat is capable of collecting
 #define SENSOR_TYPES_INFO 13//code that indicates that sensor type info will follow (see SensorDataFile.h for definitions of the sensor types)
@@ -31,7 +32,8 @@
 #define LIST_REMOTE_DATA 32//command sent to AMOS to return a list of all of the available data files
 #define LIST_REMOTE_LOG 33//command sent to AMOS to return a list of all of the available log files
 #define LIST_REMOTE_IMAGE 34//command sent to AMOS to return a list of all of the available image files
-#define LAST_COMMAND 34//the highest possible command #
+#define RTK_CORRECTION 35//sending RTK correction bytes to AMOS from an RTK base station
+#define LAST_COMMAND 36//the highest possible command #
 
 #define PASSCODE_TEXT "AMOS2018"
 

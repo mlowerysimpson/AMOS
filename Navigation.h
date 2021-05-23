@@ -61,6 +61,15 @@ public:
 
 	IMU_DATASAMPLE m_imuData;//structure for holding compass, inertial data
 	bool m_bExitNavFunction;//flag can be used to exit out of some navigation functions
+	int m_nGPSStatus;//status of the GPS, one of: 
+	//#define STATUS_NO_FIX   0       // no, or unknown
+	//#define STATUS_FIX      1   /* plain GPS mode*/
+	//#define STATUS_DGPS_FIX 2       /* yes, with DGPS */
+	//#define STATUS_RTK_FIX  3       /* yes, with RTK Fixed */
+	//#define STATUS_RTK_FLT  4       /* yes, with RTK Float */
+	//#define STATUS_DR       5       /* yes, with dead reckoning */
+	//#define STATUS_GNSSDR   6       /* yes, with GNSS + dead reckoning */
+	//#define STATUS_TIME     7       /* yes, time only (surveyed in, manual) */
 	//functions
 	void SetDeclination(double dDeclination);//set the magnetic declination for the current geographic locale
 	void PrintOutPlannedPts();//print out the planned waypoints and heading directions

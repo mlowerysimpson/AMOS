@@ -81,6 +81,9 @@ typedef int pthread_mutex_t;
 //acc/gyro timer resolution in seconds per bit
 #define ACC_GYRO_TIMER_RESOLUTION 0.000025
 
+#define CAL_SAMPLE_PIN 16 //GPIO pin used to toggle the collection of data for calibration or control the heater and fan for temperature calibration
+
+
 struct IMU_DATASAMPLE {//full data sample from inertial measurement unit
 	double sample_time_sec;//the time of the sample in seconds
 	double acc_data[3];//acceleration data in G
@@ -93,6 +96,17 @@ struct IMU_DATASAMPLE {//full data sample from inertial measurement unit
 	double roll;//computed roll angle in degrees (direction around +X axis that the +Y axis of the IMU is pointed -180 to +180
 };
 
+struct IMU_TEMP_CAL {
+	double accx_vs_temp;//offset change in x-axis acceleration vs. temperature (counts per deg C)
+	double accy_vs_temp;//offset change in y-axis acceleration vs. temperature (counts per deg C)
+	double accz_vs_temp;//offset change in z-axis acceleration vs. temperature (counts per deg C)
+	double magx_vs_temp;//offset change in x-axis magnetometer vs. temperature (counts per deg C)
+	double magy_vs_temp;//offset change in y-axis magnetometer vs. temperature (counts per deg C)
+	double magz_vs_temp;//offset change in z-axis magnetometer vs. temperature (counts per deg C)
+	double acc_cal_temp;//temperature from the accelerometer temperature sensor where offsets and gains were determined
+	double mag_cal_temp;//temperature from the magnetometer temperature sensor where offsets and gains were determined
+};
+
 class IMU {//class used for communicating with and getting tilt, angular rate, and magnetic data from an IMU (AltIMU-10 v5 by Polulu Robotics & Electronics)
 //functions are also provided for computing heading angle based on available sensor data
 public:
@@ -103,17 +117,27 @@ public:
 	bool m_bMagInitialized_OK;//flag is true if the LIS3MDL 3-axis magnetometer was properly initialized for data collection, false otherwise
 	bool m_bAccGyroInitialized_OK;//flag is true if the LSM6DS33 3-axis accelerometer and 3-axis gyroscope was properly initialized for data collection, false otherwise
 	bool m_bPressureInitialized_OK;//flag is true if the LPS25H pressure sensor was properly initialized for data collection, false otherwise
+	bool DoTempCal();//does a factory temperature calibration of the IMU sensors
 	bool GetMagSample(IMU_DATASAMPLE *pIMUSample, int nNumToAvg);//collect magnetometer data from the LIS3MDL 3-axis magnetometer device and process it to get the magnetic vector and temperature
 	bool GetAccGyroSample(IMU_DATASAMPLE *pIMUSample, int nNumToAvg);//collect accelerometer & gyro data from the LSM6DS33 and process it to get the acceleration vector, rotation rate vector, and temperature
 	bool GetSample(IMU_DATASAMPLE *pIMUSample, int nNumToAvg);//collect magnetometer, accelerometer, and gyro data, and then call ComputeOrientation to determine orientation angles
 	void ResetAccGyro();//reset the timestamps for the acc/gyro measurements back to zero seconds
 	bool DoMagCal();//perform a calibration procedure on the magnetometers to get the zero-field offsets for each of the sensors. Saves the results to the offset registers.
 	bool DoXYMagCal();//perform a calibration procedure on the magnetometers to get the zero-field offsets for the X and Y magnetometers. Saves the results to the offset registers.
+	bool DoXYMagCalWithToggledSampling();//perform a factory XY calibration procedure on the magnetometers to get the zero-field offsets for the X and Y magnetometers. Saves the results to the offset registers.
+	bool DoXZMagCalWithToggledSampling();//perform a factory XZ calibration procedure on the magnetometers to get the zero-field offsets for the X and Z magnetometers. Saves the results to the offset registers. 
 	void ComputeOrientation(IMU_DATASAMPLE *pSample);//compute orientation (pitch, roll, and heading angles) of the AltIMU-10, using acc/mag data plus gyros
+	bool SaveIMUDataToFile(char* szFilename, int nNumSecs);//save data from all sensors to a text data file for a period of time
 
 		
 private:
 	//data
+	IMU_TEMP_CAL m_tempCal;//temperature calibration object
+	double m_acc_counts[3];//used for storing accelerometer raw count  values
+	double m_mag_counts[3];//used for storing magnetometer raw count values
+	double m_gyro_counts[3];//used for storing gyro raw count values
+	bool m_bLoadedMagCal;//flag is true after magnetometer calibration has been successfully loaded
+	char m_szErrMsg[256];//buffer space used for outputting error messages
 	pthread_mutex_t *m_i2c_mutex;
 	double m_dLastSampleTime;//time of last orientation sample (in seconds)
 	int m_nGyroAxisOrder;//cycles continuously from 0, 1, 2, 0, 1, 2, etc. for each sample and defines the order used to form the orientation matrix calculated from the gyros
@@ -124,6 +148,8 @@ private:
 	unsigned int m_uiAccGyroSampleCount;//the number of acc/gyro samples successfully collected
 	
 	//functions
+	bool GetTempCalSample(char* lineText, unsigned int baseSampleTime, double& dTempDegC);//gets raw IMU data to use for coming up with a device temperature calibration
+	bool RetryOpening();//try re-opening the I2C port, return true if successful
 	void GetBestCircleFit(double *xmag, double *ymag, int nNumVals, double &magXOffset, double &magYOffset);//tries to find the approximate center and radius of a circle where nNumVals points of coordinates xmag, ymag go through the circumference of the circle
 	bool SaveMagOffsets(double dMagOffsetX, double dMagOffsetY, double dMagOffsetZ);//store magnetometer offsets to mag offsets registers
 	bool GetAvgMagVals(double mag_data[NUM_MAGCAL_AVG][3], double avg_mag[3], int nNumSamples);//get averaged magnetometer values from last NUM_MAGCAL_AVG samples stored in mag_data
@@ -141,7 +167,7 @@ private:
 	bool WaitForAccDataReady(unsigned char ucStatusReg);//check XLDA bit of LSM6DS33 status register to see if the accelerometer data is ready
 	bool WaitForGyroDataReady(unsigned char ucStatusReg);//check GDA bit of LSM6DS33 status register to see if the gyro data is ready
 	bool WaitForAccTemperatureData(unsigned char ucStatusReg);//check TDA bit of LSM6DS33 status register to see if the temperature data is ready
-	void LoadMagCal();//load magnetometer offset calibration (if available) from mag_cal.txt file
+	bool LoadMagCal();//load magnetometer offset calibration (if available) from mag_cal.txt file
 	static void normalize(double *vec);//normalizes vec (if it is not a null vector)
 };
 	

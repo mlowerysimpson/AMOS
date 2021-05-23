@@ -20,12 +20,14 @@ typedef int pthread_mutex_t;
 
 class AToD {//class used for getting A to D meausurements from the MCP3428 A to D converter chip
 public:
+	AToD(char *i2c_filename, unsigned char ucAddress);
 	AToD(char *i2c_filename, unsigned char ucAddress, ShipLog *pShipLog, pthread_mutex_t *i2c_mutex);//constructor
 	~AToD();//destructor
 
 	bool GetMeasurement(int nChannel, int nPGAGain, double dMeasurementGain, double &dResult);//get a measurement from a particular A to D 
-	bool GetBatteryVoltage(double &dBattVoltage, BatteryCharge *pBattCharge);//gets the battery voltage for AMOS, assumes various resistor divider and channel settings for the A to D measurement
-	bool SendBatteryVoltage(int nHandle, bool bUseSerial);//send most recent battery voltage out network socket or serial port (if no battery voltage available yet, then do an A to D conversion to get it)
+	bool GetBatteryVoltage(double& dBattVoltage, BatteryCharge* pBattCharge);//gets the battery voltage for AMOS, assumes various resistor divider and channel settings for the A to D measurement
+	bool SendBatteryVoltage(int nHandle, bool bUseSerial);
+
 
 private:
 	//data
@@ -42,4 +44,5 @@ private:
 
 	//functions
 	bool InitializeAtoD(int nPGAVal, int nChannel);//configure A to D for 16-bit operation
+	void LogEntry(char *szLogMsg, bool bPrintMsg);//output text to log file (and optionally print to screen)
 };

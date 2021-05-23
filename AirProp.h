@@ -1,10 +1,10 @@
 #include <wiringPi.h>
 
 #define MIN_AIRPROP_SPEED 0.0 //minimum propeller speed (i.e. stopped)
-#define MAX_RECOMMENDED_AIRPROP_SPEED 10//a speed a bit lower than the maximum that is more suitable for long-term operation
+#define MAX_RECOMMENDED_AIRPROP_SPEED 9//a speed typically a bit lower than the maximum that is more suitable for conserving power when sunlight is in limited supply
 #define MAX_AIRPROP_SPEED 10.0 //arbitrary units
 #define STOP_AIR_PULSE_TIME 1000 //pulse time required for sending a "stop" signal to the air propeller
-#define MAX_AIR_PULSE_TIME 1310 //maximum pulse time in microseconds, corresponds to maximum propeller speed (may need to tweak this somewhat depending on motor / speed controller used)
+#define MAX_AIR_PULSE_TIME 1400 //maximum pulse time in microseconds, corresponds to maximum propeller speed (may need to tweak this somewhat depending on motor / speed controller used)
 #define AIR_PWM_CLK_DIV 64 //divisor to use for 19.2 MHz PWM clock
 #define AIR_PWM_CLK_FREQ 19200000 //19.2 MHz PWM clock frequency
 #define AIR_TIME_INCREMENT_US 3.33 //timing for data portion of clock pulses has this resolution in microseconds
