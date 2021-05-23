@@ -31,6 +31,14 @@ HelixDepth::HelixDepth(void* pNav, char* szSerialPort, char *depthFilename) {
 HelixDepth::~HelixDepth() {
 	StopCollectionThread();
 	CloseDataFile();
+	if (m_szSerialPort != nullptr) {
+		delete[] m_szSerialPort;
+		m_szSerialPort = nullptr;
+	}
+	if (m_szDepthFilename != nullptr) {
+		delete[] m_szDepthFilename;
+		m_szDepthFilename = nullptr;
+	}
 }
 
 double HelixDepth::GetDepth() {//gets the current depth measurement in m

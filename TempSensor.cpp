@@ -12,7 +12,15 @@
 TempSensor::TempSensor() : Sensor(nullptr) {//constructor
 	m_nErrorCode=0;
 	memset(m_devPath,0,128); // Path to device
+	m_tempConductivty = nullptr;
 	m_bInitialized = Initialize();
+}
+
+TempSensor::TempSensor(AMLTempConductivity* pTempConductivitySensor) : Sensor(nullptr) {//constructor for use when getting water temperature from temperature / conductivity sensor
+	m_nErrorCode = 0;
+	m_bInitialized = true;
+	memset(m_devPath, 0, 128);
+	m_tempConductivty = pTempConductivitySensor;
 }
 
 TempSensor::~TempSensor() {//destructor
@@ -23,6 +31,10 @@ TempSensor::~TempSensor() {//destructor
 //fTemperature = the temperature in degrees celsius that gets returned by the function (if successful). It is left unchanged if the function is not successful
 //return value: true if the temperature sample could be successfully acquired, otherwise false
 bool TempSensor::GetTemperature(float &fTemperature) {
+	if (m_tempConductivty != nullptr) {
+		fTemperature = (float)m_tempConductivty->GetTemperature();
+		return true;
+	}
 	char tmpData[256];   // Temp C * 1000 reported by device 
 	char buf[256];     // Data from device
 	ssize_t numRead;

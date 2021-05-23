@@ -31,6 +31,7 @@
 #include "PHSensor.h"
 #include "TurbiditySensor.h"
 #include "AtlasDO2Sensor.h"
+#include "AMLTempConductivity.h"
 #include "SensorDataFile.h"
 #include "DiagnosticsSensor.h"
 #include "HumiditySensor.h"
@@ -43,7 +44,8 @@
 
 using namespace std;
 
-#define SERVER_PORT 82 //the port number that we are trying to connect to
+#define IMUTEST_BUILD 1 //uncomment when building the IMUTest program or any other program that refers to this file
+#define SERVER_PORT 81 //the port number that we are listening on for network connections 
 #define SHIP_LOG_INTERVAL_SECONDS 60 //length of time in seconds between ship's log posts
 #define ATOD_ADDRESS 0x48 //I2C address of 4-channel ADS1115 ADC converter
 //#define LiDAR_SERPORT "/dev/serial0" //serial port used for communications with TFMini LiDAR device
@@ -58,11 +60,12 @@ FileCommands *g_fileCommands;//used for handling commands sent to boat through a
 Thruster *g_thrusters;//pointer to Thruster object for controlling power to the boat's thruster(s)
 ShipLog g_shiplog;//used for logging data and to assist in debugging
 LeakSensor g_leaksensor;//interface for leak sensor, poll it to make sure boat is not leaking.
-TempSensor g_tempsensor;//interface for waterproof temperature sensor, poll to monitor temperature of water
+TempSensor *g_tempsensor;//interface for waterproof temperature sensor, poll to monitor temperature of water
 DiagnosticsSensor *g_shipdiagnostics;//interface for ship monitoring, power control, etc.
 PHSensor *g_PHSensor;//interface object for pH probe
 TurbiditySensor *g_turbiditySensor;//interface object for turbidity sensor
 AtlasDO2Sensor* g_do2Sensor;//interface object for dissolved oxygen sensor
+AMLTempConductivity* g_tempConductivitySensor;//interface object for temperature / conductivity sensor
 SwitchRelay *g_switchRelay;//interface object for controlling switch relay (eg. for switching solar input to charge controller on / off)
 HelixDepth* g_helixDepth;//interface for getting depth readings from Humminbird Helix fish finder
 Vision g_vision;//object used for taking pictures with camera(s)
@@ -86,7 +89,7 @@ double g_dBatteryVoltage;//the voltage of the battery, should be >= 12 volts
 bool g_bEnteringSleepMode;//flag is true when AMOS is about to be put to sleep (i.e. powered down) with just the RFU220SU running
 bool g_bKeepGoing;//set to true to keep listening for incoming commands from remote host(s)
 bool g_bCancelFunctions;//boolean flag is set to true, typically when program is ending. It is polled by various functions (ex: navigation functions) that sometimes take a long time to complete
-bool g_bNetClientThreadRunning;//boolean flag is true when the network client thread is running (monitor flag to make sure that socket gets closed correctly)
+bool g_bNetServerThreadRunning;//boolean flag is true when the network server thread is running (monitor flag to make sure that socket gets closed correctly)
 bool g_bSerportThreadRunning;//boolean flag is true when the serial port thread is running (monitor flag to make sure that thead and serial port get closed correctly)
 bool g_bGPSThreadRunning;//boolean flag is true when the gps collection thread is running
 bool g_bSensorThreadRunning;//boolean flag is true when the sensor collection thread is running
@@ -95,6 +98,8 @@ bool g_bFileCommandsThreadRunning;//boolean flag is true when the file commands 
 char *g_serPort;//the text identifier of the serial port being used for a wireless serial link (set to nullptr if not used)
 char g_keyboardBuf[4];//used to keep track of the last 4 characters typed by the user, looking for the word "quit" to exit the program
 int g_keyTypedIndex;//index within g_keyboardBuf for where to store the next keyboard character typed
+char* g_szRTKPort;//serial port used for sending RTK correction data to GPS receiver board
+int g_nSensorStabilizeTimeSec;//length of time required for stabilization before taking sensor measurements (if non-zero, thrusters are turned off prior to taking measurements)
 
 //thread IDs
 pthread_t g_networkThreadId;//thread id for thread that listens for incoming network connections
@@ -174,46 +179,75 @@ void *serportFunction(void *pParam) {//function receives commands from base stat
 	return nullptr;
 }
 
-void *clientNetFunction(void *pParam) {//function connects to the boat server and sends and receives data with it
-	g_shiplog.LogEntry((char *)"client network function started...\n",true);
-	int sockfd;
+void *serverNetFunction(void* pParam) {//function connects to the boat server and sends and receives data with it
+	g_shiplog.LogEntry((char*)"server network function started...\n", true);
+	int sockfd;//socket description
 	int portno = SERVER_PORT;
-	g_bNetClientThreadRunning=true;
-	char *serverIPAddress = (char *)pParam;
+	g_bNetServerThreadRunning = true;
+	char* serverIPAddress = (char*)pParam;
 	char sMsg[128];
-	struct sockaddr_in serv_addr;
-	struct hostent *server;
+	struct sockaddr_in serv_addr;//server address
+	struct sockaddr_in client_addr;//client address
 	char buffer[256];
-	sprintf(sMsg,"contacting %s on port %d\n",serverIPAddress,portno);
-	g_shiplog.LogEntry(sMsg,true);
-		
+	
 	while (g_bKeepGoing) {
-		if  (( sockfd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
-			g_shiplog.LogEntry((char *)"ERROR opening socket.\n",true);
-			g_bNetClientThreadRunning=false;
+		//create socket
+		if ((sockfd = socket(AF_INET, SOCK_STREAM, 0)) < 0) {
+			g_shiplog.LogEntry((char*)"ERROR trying to create socket.\n", true);
+			g_bNetServerThreadRunning = false;
 			return nullptr;
 		}
-		if ( ( server = gethostbyname( serverIPAddress ) ) == NULL ) {
-			g_shiplog.LogEntry((char *)"ERROR, no such host\n",true);
-			g_bNetClientThreadRunning=false;
-			return nullptr;
-		}
-
-		bzero( (char *) &serv_addr, sizeof(serv_addr));
+		//set option to resuse sockets
+		int nReuse = 1;
+		setsockopt(sockfd, SOL_SOCKET, SO_REUSEADDR, (const char*)&nReuse, sizeof(int));
+		int new_socket, c;
+		
+		//Prepare the sockaddr_in structure
 		serv_addr.sin_family = AF_INET;
-		bcopy( (char *)server->h_addr, (char *)&serv_addr.sin_addr.s_addr, server->h_length);
-		serv_addr.sin_port = htons(portno);
-		if ( connect(sockfd,(struct sockaddr *)&serv_addr,sizeof(serv_addr)) < 0) {
-			g_shiplog.LogEntry((char *)"ERROR connecting.\n",true);
+		serv_addr.sin_addr.s_addr = INADDR_ANY;
+		serv_addr.sin_port = htons(SERVER_PORT);
+
+		//Bind
+		if (bind(sockfd, (struct sockaddr*) & serv_addr, sizeof(serv_addr)) < 0)
+		{
+			sprintf(sMsg, (char*)"server binding failed. Last Error = %d\n", true, errno);
+			g_shiplog.LogEntry(sMsg, true);
+			g_shiplog.LogEntry(strerror(errno), true);
+			g_bNetServerThreadRunning = false;
+			return nullptr;
+		}
+		//Listen
+		listen(sockfd, SOMAXCONN);
+
+		//Accept an incoming connection
+		g_shiplog.LogEntry((char*)"Waiting for an incoming connection...\n", true);
+		c = sizeof(struct sockaddr_in);
+		new_socket = accept(sockfd, (struct sockaddr*) & client_addr, (socklen_t*)&c);
+		if (new_socket < 0)
+		{
+			g_shiplog.LogEntry((char*)"accept failed.\n", true);
+			close(sockfd);
 			continue;
 		}
-		g_shiplog.LogEntry((char *)"network connection accepted\n",true);
-
-		//send passcode
+		g_shiplog.LogEntry((char*)"Connection accepted.\n", true);
+		
+		//receive passcode
 		char passCode[32];
-		strcpy(passCode,(char *)PASSCODE_TEXT);
-		if (send(sockfd, passCode, strlen(passCode), 0)<0) {
-			g_shiplog.LogEntry((char *)"ERROR sending passcode.\n",true);
+		char receivedCode[32];
+		memset(passCode, 0, 32);
+		memset(receivedCode, 0, 32);
+		strcpy(passCode, (char*)PASSCODE_TEXT);
+		int nNumRead = read(new_socket, receivedCode, strlen(passCode));
+		if (nNumRead < strlen(passCode)) {
+			g_shiplog.LogEntry((char*)"Error, timed out trying to receive passcode.\n", true);
+			close(new_socket);
+			close(sockfd);
+			continue;
+		}
+		else if (strcmp(passCode, receivedCode) != 0) {
+			g_shiplog.LogEntry((char*)"Error, incorrect passcode received.\n", true);
+			close(new_socket);
+			close(sockfd);
 			continue;
 		}
 
@@ -222,25 +256,27 @@ void *clientNetFunction(void *pParam) {//function connects to the boat server an
 		tv.tv_sec = 1;//set for 1 second timeout
 		tv.tv_usec = 0;
 		setsockopt(sockfd, SOL_SOCKET, SO_RCVTIMEO, (const char*)&tv, sizeof tv);
+		
 
-		//keep trying to receive data on this socket until an error occurs
-		RemoteCommand *pRC = new RemoteCommand((char *)g_rootFolder, sockfd,g_navigator,g_thrusters,g_atod,(void *)&g_shiplog);
-		int nErrorCount=0;
+		//keep trying to receive data on the accepted socket until an error occurs
+		RemoteCommand* pRC = new RemoteCommand((char*)g_rootFolder, new_socket, g_navigator, g_thrusters, g_atod, (void*)&g_shiplog);
+		int nErrorCount = 0;
+		bool bSocketsClosed = false;
 		while (g_bKeepGoing) {
-			REMOTE_COMMAND *pCommandReceived = pRC->GetCommand();
+			REMOTE_COMMAND* pCommandReceived = pRC->GetCommand();
 			if (pCommandReceived) {
-				nErrorCount=0;
-				if (pCommandReceived->nCommand==THRUST_ON||pCommandReceived->nCommand==THRUST_OFF || pCommandReceived->nCommand == SCRIPT_STATUS_PACKET || pCommandReceived->nCommand == SCRIPT_STEP_CHANGE) {
-					g_lastNetworkCommandTime=millis();
+				nErrorCount = 0;
+				if (pCommandReceived->nCommand == THRUST_ON || pCommandReceived->nCommand == THRUST_OFF || pCommandReceived->nCommand == SCRIPT_STATUS_PACKET || pCommandReceived->nCommand == SCRIPT_STEP_CHANGE) {
+					g_lastNetworkCommandTime = millis();
 				}
 				//test
-				sprintf(sMsg,"Net Command Received: %d\n",pCommandReceived->nCommand);
-				g_shiplog.LogEntry(sMsg,true);
+				sprintf(sMsg, "Net Command Received: %d\n", pCommandReceived->nCommand);
+				g_shiplog.LogEntry(sMsg, true);
 				//end test
 				pthread_mutex_lock(&g_remoteCommandsMutex);
 				pRC->ExecuteCommand(pCommandReceived, false);
-				if (pCommandReceived->nCommand==QUIT_PROGRAM) {
-					g_bKeepGoing=false;//remote command to quit program was received
+				if (pCommandReceived->nCommand == QUIT_PROGRAM) {
+					g_bKeepGoing = false;//remote command to quit program was received
 					g_bCancelFunctions = true;//cancel any navigation functions that might be in progress
 				}
 				RemoteCommand::DeleteCommand(pCommandReceived);
@@ -248,18 +284,24 @@ void *clientNetFunction(void *pParam) {//function connects to the boat server an
 			}
 			else {//some error occurred trying to get data, so look for new connection
 				nErrorCount++;
-				if (nErrorCount>=60) {//~  1 minute of no data, so try for new connection
+				if (nErrorCount >= 60) {//~  1 minute of no data, so try for new connection
+					close(new_socket);
 					close(sockfd);
+					bSocketsClosed = true;
 					break;
 				}
 			}
+		}
+		if (!bSocketsClosed) {
+			close(new_socket);
+			close(sockfd);
 		}
 		delete pRC;
 	}
 	shutdown(sockfd, SHUT_WR);
 	close(sockfd);
-	g_shiplog.LogEntry((char *)"exiting client network thread.\n",true);
-	g_bNetClientThreadRunning=false;
+	g_shiplog.LogEntry((char*)"exiting server network thread.\n", true);
+	g_bNetServerThreadRunning = false;
 	return nullptr;
 }
 
@@ -375,7 +417,7 @@ void *sensorCollectionFunction(void *pParam) {
 		}
 		//check leak sensors and respond accordingly if leak has occurred
 		bool bLeak = g_leaksensor.CheckLeakSensors((void *)&g_shiplog);
-		if (bLeak) {
+		if (bLeak&& g_bKeepGoing) {
 			if (!g_leaksensor.HasSentLeakNotification()) {
 				g_leaksensor.SendLeakNotification((void *)&g_shiplog, &g_notifier);
 			}
@@ -390,7 +432,7 @@ void *sensorCollectionFunction(void *pParam) {
 			}
 		}
 		//check to see if battery voltage measurement should be made
-		if ((uiCurrentTime - uiLastBattVoltageMeasurement)>=60000) {//do battery voltage measurement every minute
+		if (((uiCurrentTime - uiLastBattVoltageMeasurement)>=60000)&& g_bKeepGoing) {//do battery voltage measurement every minute
 			uiLastBattVoltageMeasurement = uiCurrentTime;
 			double dBattVoltage = 0.0;
 			if (g_atod->GetBatteryVoltage(dBattVoltage,g_batteryCharge)) {
@@ -478,7 +520,7 @@ void *sensorCollectionFunction(void *pParam) {
 			}
 		}
 		//check to see if LiDAR measurement should be made
-		if (g_bUseLiDAR&&(uiCurrentTime - uiLastLiDARMeasurement)>=1000*g_dLiDAR_IntervalSec) {//do LiDAR measurement
+		if (g_bUseLiDAR&& g_bKeepGoing&&(uiCurrentTime - uiLastLiDARMeasurement)>=1000*g_dLiDAR_IntervalSec) {//do LiDAR measurement
 			//double dDistMeters = m_miniLiDAR.getDistance()*.01; //--> uncomment for TF Mini LiDAR
 			double dDistMeters = g_lidar->getDistance()*.01;
 			//unsigned short signalStrength = m_miniLiDAR.getRecentSignalStrength(); //--> uncomment for TF Mini LiDAR
@@ -520,27 +562,26 @@ void *sensorCollectionFunction(void *pParam) {
 			uiLastLiDARMeasurement = uiCurrentTime;
 		}
 		//check to see if it's time to log sensor data to file
-		if (g_sensorDataFile&&g_nLoggingIntervalSec>0) {
+		if (g_sensorDataFile!=nullptr&&g_nLoggingIntervalSec>0&& g_bKeepGoing) {
 			time_t rawtime;
 			struct tm * timeinfo;
 			time(&rawtime);
 			timeinfo = localtime(&rawtime);
 			if (g_sensorDataFile->isTimeToLogSensorData(timeinfo)) {
 				pthread_mutex_lock(&g_remoteCommandsMutex);
-				g_thrusters->Stop();
-				SensorDeploy s(g_rootFolder,false);
-				s.Deploy();
-				usleep(10000000);//wait 10 seconds for sensors to stabilize in water
-				g_sensorDataFile->CollectData();
-				s.Retract();
-				g_sensorDataFile->SaveData(timeinfo, g_nLoggingIntervalSec);
+				if (g_nSensorStabilizeTimeSec > 0&&g_bKeepGoing) {
+					g_thrusters->Stop();
+					usleep(g_nSensorStabilizeTimeSec*1000000);//wait for sensors to stabilize in water
+				}
+				if (g_bKeepGoing)
+				{
+					g_sensorDataFile->CollectData();
+					g_sensorDataFile->SaveData(timeinfo, g_nLoggingIntervalSec);
+				}
 				pthread_mutex_unlock(&g_remoteCommandsMutex);
 			}
 		}
 	}
-	//test
-	printf("finished sensor collection thread\n");
-	//end test
 	g_bSensorThreadRunning = false;
 	return nullptr;
 }
@@ -589,7 +630,7 @@ void *fileCommandsFunction(void *pParam) {
 }
 
 bool isSomethingToLog() {//return true if boat is logging at least some data
-	if (g_bLogWaterTemp||g_bLogBoatTemp||g_bLogGPSData||g_PHSensor!=nullptr||g_turbiditySensor!=nullptr||g_do2Sensor!=nullptr) {
+	if (g_bLogWaterTemp||g_bLogBoatTemp||g_bLogGPSData||g_PHSensor!=nullptr||g_turbiditySensor!=nullptr||g_do2Sensor!=nullptr||g_tempConductivitySensor!=nullptr) {
 		return true;
 	}
 	return false;
@@ -615,14 +656,17 @@ void ExecuteCommand(REMOTE_COMMAND *pCommand) {//executes the remote command nCo
 
 void Cleanup() {//remove any un-executed commands from the queue, do general cleanup of memory, and cancel any running threads
 	//pause for a bit to allow network client thread to exit cleanly, so that socket connection (if any) gets properly closed
+	//test
+	printf("Entering cleanup.\n");
+	//end test
 	unsigned int uiTimeoutTime = millis() + 30000;//allow up to 30 seconds for threads to exit cleanly
-	while (millis()<uiTimeoutTime&&(g_bNetClientThreadRunning||g_bSerportThreadRunning||g_bGPSThreadRunning||g_bSensorThreadRunning||g_bFileCommandsThreadRunning)) {
+	while (millis()<uiTimeoutTime&&(g_bNetServerThreadRunning||g_bSerportThreadRunning||g_bGPSThreadRunning||g_bSensorThreadRunning||g_bFileCommandsThreadRunning)) {
 		usleep(100000);//sleep for 100 ms
 	}
 	if (millis()>uiTimeoutTime) {
 		printf("timeout occurred\n");
-		if (g_bNetClientThreadRunning) {
-			printf("Net client thread did not exit cleanly.\n");
+		if (g_bNetServerThreadRunning) {
+			printf("Net server thread did not exit cleanly.\n");
 		}
 		if (g_bSerportThreadRunning) {
 			printf("Serial port thread did not exit cleanly.\n");
@@ -694,11 +738,15 @@ void Cleanup() {//remove any un-executed commands from the queue, do general cle
 		delete g_shipdiagnostics;
 		g_shipdiagnostics = nullptr;
 	}
+	if (g_szRTKPort != nullptr) {
+		delete[] g_szRTKPort;
+		g_szRTKPort = nullptr;
+	}
 }
 
-void StartNetworkClientThread(char *remoteIPAddr) {//start thread to open client that connects to the boat server
+void StartNetworkServerThread(char *remoteIPAddr) {//start thread to create server that allows incoming network connections to control the boat and get data
 	strcpy(g_remote_ipaddr,remoteIPAddr);
-	int nError = pthread_create(&g_networkThreadId, NULL, &clientNetFunction, (void *)g_remote_ipaddr);
+	int nError = pthread_create(&g_networkThreadId, NULL, &serverNetFunction, (void *)g_remote_ipaddr);
 	if (nError != 0) {
 		printf("Can't create thread: %s", strerror(nError));
 	}
@@ -798,9 +846,35 @@ bool GetDataLoggingPreferences() {//get data logging preferences from prefs.txt 
 		delete g_do2Sensor;
 		g_do2Sensor = nullptr;
 	}
+	if (g_tempConductivitySensor != nullptr) {
+		delete g_tempConductivitySensor;
+		g_tempConductivitySensor = nullptr;
+	}
+	if (g_tempsensor != nullptr) {
+		delete g_tempsensor;
+		g_tempsensor = nullptr;
+	}
 	bool bGetDO2Data = (bool)prefsFile.getInteger((char*)"[sensors]", (char*)"do2_sensor");
 	if (bGetDO2Data) {
 		g_do2Sensor = new AtlasDO2Sensor(&g_i2cMutex);
+	}
+	bool bGetTempConductivityData = (bool)prefsFile.getInteger((char*)"[sensors]", (char*)"temp_conductivity_sensor");
+	if (bGetTempConductivityData) {
+		char* szTempConductivitySerport = NULL;
+		prefsFile.getString("[sensors]", "temp_conductivity_port", &szTempConductivitySerport);
+		if (szTempConductivitySerport != nullptr) {
+			g_tempConductivitySensor = new AMLTempConductivity(szTempConductivitySerport);
+			delete[]szTempConductivitySerport;
+			if (g_tempsensor != nullptr) {
+				delete g_tempsensor;
+				g_tempsensor = nullptr;
+			}
+			g_tempsensor = new TempSensor(g_tempConductivitySensor);
+			g_bLogWaterTemp = true;
+		}
+	}
+	else if (g_bLogWaterTemp) {
+		g_tempsensor = new TempSensor();
 	}
 	bool bGetTurbidity = (bool)prefsFile.getInteger((char *)"[sensors]",(char *)"turbidity_sensor");
 	if (bGetTurbidity) {
@@ -831,10 +905,16 @@ bool GetDataLoggingPreferences() {//get data logging preferences from prefs.txt 
 	g_bLiDARSafetyMode = (bool)prefsFile.getInteger((char *)"[lidar]",(char *)"safety_mode");//whether or not to turn off thrusters whenever an obstacle is encountered
 	g_bLiDARAvoidanceMode = (bool)prefsFile.getInteger((char *)"[lidar]",(char *)"avoidance_mode");//whether or not to alter heading in order to try to avoid obstacles
 	if (g_bUseLiDAR) {
+		g_lidar = new LIDARLite(&g_i2cMutex);
 		g_lidar->TurnOn(true);//turn on LiDAR
 	}
 	else {
-		g_lidar->TurnOn(false);//turn off LiDAR to save power
+		if (g_lidar != nullptr)
+		{
+			g_lidar->TurnOn(false);//turn off LiDAR to save power
+			delete g_lidar;
+		}
+		g_lidar = nullptr;
 	}
 
 	//sensor preferences
@@ -847,6 +927,7 @@ bool GetDataLoggingPreferences() {//get data logging preferences from prefs.txt 
 		g_nLoggingIntervalSec = nHrs*3600 + nMin*60 + nSec;
 		delete[] loggingInterval;
 	}
+	g_nSensorStabilizeTimeSec = prefsFile.getInteger("[sensors]", "stabilization_time_sec");
 	
 	if (isSomethingToLog()) {//g_bLogWaterTemp||g_bLogBoatTemp||g_bLogGPSData||g_PHSensor!=nullptr||g_turbiditySensor!=nullptr) {
 		void *sensorObjects[MAX_SENSORS];
@@ -864,7 +945,7 @@ bool GetDataLoggingPreferences() {//get data logging preferences from prefs.txt 
 		}
 		if (g_bLogWaterTemp) {
 			sensorTypes[nNumSensors] = WATER_TEMP_DATA;
-			sensorObjects[nNumSensors] = (void *)&g_tempsensor;
+			sensorObjects[nNumSensors] = (void *)g_tempsensor;
 			nNumSensors++;
 		}
 		if (g_bLogBoatTemp) {
@@ -885,6 +966,11 @@ bool GetDataLoggingPreferences() {//get data logging preferences from prefs.txt 
 		if (g_do2Sensor) {
 			sensorTypes[nNumSensors] = DO2_DATA;
 			sensorObjects[nNumSensors] = (void*)g_do2Sensor;
+			nNumSensors++;
+		}
+		if (g_tempConductivitySensor) {
+			sensorTypes[nNumSensors] = CONDUCTIVITY_DATA;
+			sensorObjects[nNumSensors] = (void*)g_tempConductivitySensor;
 			nNumSensors++;
 		}
 		//leak sensor
@@ -919,6 +1005,12 @@ bool GetDataLoggingPreferences() {//get data logging preferences from prefs.txt 
 				delete[]szDepthSerport;
 			}
 		}
+		//GPS RTK correction data
+		if (g_szRTKPort != nullptr) {
+			delete[]g_szRTKPort;
+			g_szRTKPort = nullptr;
+		}
+		prefsFile.getString("[gps]", "rtk_port", &g_szRTKPort);
 	}
 	return true;
 }
@@ -951,21 +1043,25 @@ void baz() {
   printf("%d\n", *foo);       // causes segfault
 }
 
+#ifndef  IMUTEST_BUILD
 
 int main(int argc, const char * argv[]) {
 	getcwd(g_rootFolder,PATH_MAX);
 	g_shipdiagnostics = nullptr;
 	g_sensorDataFile = nullptr;
+	g_tempsensor = nullptr;
 	g_PHSensor = nullptr;
 	g_turbiditySensor = nullptr;
 	g_do2Sensor = nullptr;
+	g_tempConductivitySensor = nullptr;
 	g_helixDepth = nullptr;
 	g_serPort = nullptr;
+	g_szRTKPort = nullptr;
 	g_switchRelay = nullptr;
 	g_bEnteringSleepMode = false;
 	g_bLogWaterTemp = false;
 	g_bLogBoatTemp = false;
-	g_bNetClientThreadRunning=false;
+	g_bNetServerThreadRunning=false;
 	g_bSerportThreadRunning=false;
 	g_bGPSThreadRunning = false;
 	g_bSensorThreadRunning = false;
@@ -982,6 +1078,7 @@ int main(int argc, const char * argv[]) {
 	g_bLiDARAvoidanceMode = false;
 	memset(g_keyboardBuf,0,4);
 	g_keyTypedIndex = 0;
+	g_nSensorStabilizeTimeSec = 0;
 
 	g_navigator = new Navigation(-18,&g_i2cMutex);//set to - 18 degrees magnetic declination for New Brunswick, Canada
 
@@ -993,24 +1090,29 @@ int main(int argc, const char * argv[]) {
 	g_networkThreadId = 0;
 	g_serportThreadId = 0;
 	g_fileCommands=nullptr;
+	
 	pthread_mutexattr_init(&g_remoteCommandsMutexAttr);
 	pthread_mutexattr_settype(&g_remoteCommandsMutexAttr, PTHREAD_MUTEX_RECURSIVE);
 	pthread_mutex_init(&g_remoteCommandsMutex, &g_remoteCommandsMutexAttr);
 	g_i2cMutex = PTHREAD_MUTEX_INITIALIZER;
 	Thruster::OneTimeSetup();//do I/O setup for thrusters (once per power-cycle), this function calls the WiringPi setup function
 
+	
 	pinMode(ACTIVITY_PIN,OUTPUT);//setup activity pin as output
 	g_switchRelay = new SwitchRelay((char *)"prefs.txt");
 	if (g_shipdiagnostics!=nullptr) {
 		g_shipdiagnostics->ActivityPulse();//send activity pulse out on activity pin to indicate that program is running
 	}
+	
 	//g_thrusters = new Thruster(true,true,false);//Thruster constructor for left & right propellers in water
 	g_thrusters = new Thruster(false,false,true);//Thruster constructor for air propeller & rudder
 	g_thrusters->Initialize();//more initialization for thrusters (makes sure they begin "stopped")
 
+	
 	char *i2c_filename = (char*)"/dev/i2c-1";
 	g_atod = new AToD(i2c_filename,ATOD_ADDRESS,&g_shiplog,&g_i2cMutex);
-	g_lidar = new LIDARLite(&g_i2cMutex);
+	g_lidar = nullptr;
+	
 	g_batteryCharge = new BatteryCharge((char *)"prefs.txt",&g_shiplog);
 	g_shipdiagnostics = new DiagnosticsSensor(g_atod);
 
@@ -1038,6 +1140,7 @@ int main(int argc, const char * argv[]) {
 			}
 		}
 	}
+
 	//get data logging preferences from prefs.txt file
 	if (!GetDataLoggingPreferences()) {
 		//error trying to access prefs.txt file
@@ -1087,7 +1190,7 @@ int main(int argc, const char * argv[]) {
 	}
 	else {
 		char *remoteIPAddr = (char *)argv[1];
-		StartNetworkClientThread(remoteIPAddr);//start thread to open client that connects to the boat server
+		StartNetworkServerThread(remoteIPAddr);//start thread to create server that receives commands and sends back data
 	}
 	
 	printf("Type \"quit\" to exit...\n");
@@ -1192,3 +1295,5 @@ int main(int argc, const char * argv[]) {
 	}
 	return 0;
 }
+
+#endif // ! IMUTEST_BUILD

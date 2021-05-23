@@ -23,6 +23,7 @@ extern pthread_mutex_t g_remoteCommandsMutex;//mutex for making sure remote comm
 extern Vision g_vision;//object used for taking pictures with camera(s)
 extern bool g_bExitFileCommandsThread;//boolean flag used to control when the file commands thread should exit
 extern bool g_bFileCommandsThreadRunning;//boolean flag is true when the file commands thread is running
+extern char* g_szRTKPort;//serial port used for sending RTK correction data to GPS receiver board
 
 
 void *driveForwardThread(void *pParam) {//function drives boat forward at its current heading and speed
@@ -60,6 +61,7 @@ RemoteCommand::RemoteCommand(char *szRootFolder, int nSocket, Navigation *pNav, 
 	m_shipLog = pShipLog;
 	m_bDrivingThreadRunning=false;
 	m_bStopDriving=false;
+	m_rtk = nullptr;
 	m_nSocket = nSocket;
 	m_nLastError = 0;
 	m_thrusters=pThrusters;
@@ -76,6 +78,10 @@ RemoteCommand::RemoteCommand(char *szRootFolder, int nSocket, Navigation *pNav, 
 
 RemoteCommand::~RemoteCommand() {
 	ExitMoveThreads();
+	if (m_rtk != nullptr) {
+		delete m_rtk;
+		m_rtk = nullptr;
+	}
 }
 
 //GetCommand: get the next available command from the remote host
@@ -150,22 +156,24 @@ REMOTE_COMMAND * RemoteCommand::GetNetworkCommand() {
 			pCommandReceived->pDataBytes = dataBytes;
 		}
 	}
-	//send confirmation back to remote client that command was successfully received
-	//just echo back commandBuf bytes	
-	//test
-	printf("About to send confirmation...\n");
-	//end test
-	if (send(m_nSocket, (char *)commandBuf, 4, 0)<0) {
-		m_nLastError = ERROR_SENDING_DATA;
+	if (needsConfirmation(pCommandReceived->nCommand)) {
+		//send confirmation back to remote client that command was successfully received
+		//just echo back commandBuf bytes	
 		//test
-		printf("ERROR_SENDING_DATA\n");
+		printf("About to send confirmation...\n");
 		//end test
-		if (pCommandReceived->pDataBytes!=nullptr) {
-			delete []pCommandReceived->pDataBytes;
-			pCommandReceived->pDataBytes=nullptr;
+		if (send(m_nSocket, (char*)commandBuf, 4, 0) < 0) {
+			m_nLastError = ERROR_SENDING_DATA;
+			//test
+			printf("ERROR_SENDING_DATA\n");
+			//end test
+			if (pCommandReceived->pDataBytes != nullptr) {
+				delete[]pCommandReceived->pDataBytes;
+				pCommandReceived->pDataBytes = nullptr;
+			}
+			delete pCommandReceived;
+			return nullptr;
 		}
-		delete pCommandReceived;
-		return nullptr;
 	}
 	return pCommandReceived;
 }
@@ -194,6 +202,7 @@ bool RemoteCommand::requiresMoreData(int nCommand) {
 	else if (nCommand == FILE_RECEIVE) return true;
 	else if (nCommand == USE_REMOTE_SCRIPT) return true;
 	else if (nCommand == REFRESH_SETTINGS) return true;
+	else if (nCommand == RTK_CORRECTION) return true;
 	return false;
 }
 
@@ -301,6 +310,18 @@ bool RemoteCommand::ExecuteCommand(REMOTE_COMMAND* pCommand, bool bUseSerial) {/
 	else if (pCommand->nCommand == WATER_TURBIDITY_DATA_PACKET) {
 		if (!g_sensorDataFile) return false;
 		if (!g_sensorDataFile->SendSensorData(WATER_TURBIDITY, m_nSocket, bUseSerial)) {//send water temperature
+			return false;
+		}
+	}
+	else if (pCommand->nCommand == DO2_DATA_PACKET) {
+		if (!g_sensorDataFile) return false;
+		if (!g_sensorDataFile->SendSensorData(DO2_DATA, m_nSocket, bUseSerial)) {//send water temperature
+			return false;
+		}
+	}
+	else if (pCommand->nCommand == CONDUCTIVITY_DATA_PACKET) {
+		if (!g_sensorDataFile) return false;
+		if (!g_sensorDataFile->SendSensorData(CONDUCTIVITY_DATA, m_nSocket, bUseSerial)) {//send water temperature
 			return false;
 		}
 	}
@@ -571,7 +592,15 @@ bool RemoteCommand::ExecuteCommand(REMOTE_COMMAND* pCommand, bool bUseSerial) {/
 		int nSettingsType = (int)GetUIntFromBytes(pCommand->pDataBytes);
 		return RefreshSettings(nSettingsType);
 	}
-
+	else if (pCommand->nCommand == RTK_CORRECTION) {
+		//packet of incoming RTK correction data
+		if (g_szRTKPort != nullptr) {
+			if (m_rtk == nullptr) {
+				m_rtk = new RTK(g_szRTKPort);
+			}
+			m_rtk->SendSerialRTKData(pCommand->pDataBytes, pCommand->nNumDataBytes);
+		}
+	}
 	return true;
 }
 
@@ -997,4 +1026,12 @@ bool RemoteCommand::RefreshSettings(int nSettingsType) {//refresh settings of a 
 		return GetDataLoggingPreferences();
 	}
 	return false;
+}
+
+bool RemoteCommand::needsConfirmation(int nCommandType) {//return true if an nCommandType command requires some form of confirmation back to the host
+	//currently only RTK_CORRECTION commands do not require any sort of confirmation
+	if (nCommandType == RTK_CORRECTION) {
+		return false;
+	}
+	return true;
 }

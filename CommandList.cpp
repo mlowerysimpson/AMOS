@@ -85,6 +85,20 @@ BOAT_DATA * BoatCommand::CreateBoatData(int nDataType) {//create an empty BOAT_D
 		memset(pAMOSData->dataBytes,0,pAMOSData->nDataSize);
 		pAMOSData->checkSum = CalculateChecksum(pAMOSData);//checksum needs to be recalculated whenever pAMOSData changes
 	}
+	else if (nDataType == DO2_DATA_PACKET) {
+		pAMOSData->nPacketType = DO2_DATA_PACKET;
+		pAMOSData->nDataSize = sizeof(float);
+		pAMOSData->dataBytes = new unsigned char[pAMOSData->nDataSize];
+		memset(pAMOSData->dataBytes, 0, pAMOSData->nDataSize);
+		pAMOSData->checkSum = CalculateChecksum(pAMOSData);//checksum needs to be recalculated whenever pAMOSData changes
+	}		
+	else if (nDataType == CONDUCTIVITY_DATA_PACKET) {
+		pAMOSData->nPacketType = CONDUCTIVITY_DATA_PACKET;
+		pAMOSData->nDataSize = sizeof(float);
+		pAMOSData->dataBytes = new unsigned char[pAMOSData->nDataSize];
+		memset(pAMOSData->dataBytes, 0, pAMOSData->nDataSize);
+		pAMOSData->checkSum = CalculateChecksum(pAMOSData);//checksum needs to be recalculated whenever pAMOSData changes
+	}
 	else if (nDataType==VIDEO_DATA_PACKET) {
 		pAMOSData->nPacketType = VIDEO_DATA_PACKET;
 		pAMOSData->nDataSize = sizeof(int);

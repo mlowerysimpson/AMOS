@@ -14,7 +14,7 @@
 #define METERS_PER_SEC_TO_KTS 1.94384//conversion factor from meters per second to knots
 #define EARTH_RADIUS_EQUATOR_M 6378150.0//radius of Earth at the equator in m
 #define EARTH_RADIUS_POLE_M 6356890.0//radius of Earth at the poles in m
-#define CLOSE_ENOUGH_M 20.0//close enough distance in m for making decisions about whether or not we are close enough to a target destination
+#define CLOSE_ENOUGH_M 3//close enough distance in m for making decisions about whether or not we are close enough to a target destination
 
 
 /**
@@ -201,6 +201,7 @@ bool Navigation::CollectGPSData(void *pShipLog, bool *bKeepGoing) {//collects a 
 		m_dGPSAccuracyM = gpsd_data->epe;
 		m_nNumGPSSatellitesInView = gpsd_data->satellites_visible;//number of satellites in view
 		m_nNumGPSSatellitesUsed = gpsd_data->satellites_used;
+		m_nGPSStatus = gpsd_data->status;
 		
 		m_dSpeed = gpsd_data->fix.speed;
 		m_dTrack = gpsd_data->fix.track;
@@ -436,6 +437,10 @@ double Navigation::ComputeHeadingDif(double dHeading1Deg,double dHeading2Deg) {/
 			//end test
 			usleep(1000000);//delay executing thruster actions after recent network commands
 		}
+		if (*bCancel) {
+			pThrust->Stop();
+			return;
+		}
 		CheckPriority(nPriority);//check to see if there are no other higher priority threads trying to execute a navigation command at the same time
 		//test
 		//strcpy(sMsg,(char *)"About to lock mutex.\n");
@@ -476,6 +481,10 @@ double Navigation::ComputeHeadingDif(double dHeading1Deg,double dHeading2Deg) {/
 				usleep(100000);//0.1 second pause
 				dHeadingDif = ComputeHeadingDif(m_imuData.heading,(double)fHeading);
 			}
+			if (*bCancel) {
+				pThrust->Stop();
+				return;
+			}
 			//test
 			strcpy(sMsg,(char *)"End reverse.\n");
 			pLog->LogEntry(sMsg,true);
@@ -501,6 +510,10 @@ double Navigation::ComputeHeadingDif(double dHeading1Deg,double dHeading2Deg) {/
 	}
 	while ((millis() - *lastNetworkCommandTimeMS)<10000&&!*bCancel) {
 		usleep(1000000);//delay executing thruster actions after recent network commands
+	}
+	if (*bCancel) {
+		pThrust->Stop();
+		return;
 	}
 	if (Util::trylock(command_mutex,10000,bCancel)) {
 		pThrust->Stop();//stop thrusters after desired heading is achieved
@@ -657,13 +670,13 @@ void Navigation::IncrementTurningSpeed(float &fSpeedLeft,float &fSpeedRight,floa
 char *Navigation::GetStatusLogText() {
 	char tempBuf[256];
 	if (m_imuData.heading==0&&m_imuData.mag_temperature==0) {//compass data not ready yet, use N.A. for these values
-		sprintf(tempBuf,"pos = %.6f, %.6f; speed = %.1f kts; track = %.1f deg; heading = N.A. deg; temp = N.A. deg C",
-		m_dLatitude, m_dLongitude, m_dSpeed*METERS_PER_SEC_TO_KTS, m_dTrack);
+		sprintf(tempBuf,"pos = %.6f, %.6f; speed = %.1f kts; track = %.1f deg; heading = N.A. deg; temp = N.A. deg C; status = %d",
+		m_dLatitude, m_dLongitude, m_dSpeed*METERS_PER_SEC_TO_KTS, m_dTrack,m_nGPSStatus);
 	}
 	else {
 		double dInteriorTemp = (m_imuData.mag_temperature + m_imuData.acc_gyro_temperature)/2;//average of mag and acc/gyro temperatures
-		sprintf(tempBuf,"pos = %.6f, %.6f; speed = %.1f kts; track = %.1f deg; heading = %.1f deg; temp = %.1f deg C",
-			m_dLatitude, m_dLongitude, m_dSpeed*METERS_PER_SEC_TO_KTS, m_dTrack, m_imuData.heading, dInteriorTemp);
+		sprintf(tempBuf,"pos = %.6f, %.6f; speed = %.1f kts; track = %.1f deg; heading = %.1f deg; temp = %.1f deg C; status = %d",
+			m_dLatitude, m_dLongitude, m_dSpeed*METERS_PER_SEC_TO_KTS, m_dTrack, m_imuData.heading, dInteriorTemp,m_nGPSStatus);
 	}
 	int nStrLength = strlen(tempBuf);
 	char *retval = new char[nStrLength+1];

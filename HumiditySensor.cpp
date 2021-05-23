@@ -251,7 +251,7 @@ bool HumiditySensor::CollectHumidityData(int nLocation) {
 		// If Check-sum data is correct display humidity and temperature
 		if (data[4] == checksum) {
 			// * 256 is the same thing '<< 8' (shift).
-			pthread_mutex_lock(&m_threadMutex);
+			
 			float fHumidity = ((data[0] * 256) + data[1]) / 10.0;
 			float fTemperature = 0;
 			
@@ -267,6 +267,7 @@ bool HumiditySensor::CollectHumidityData(int nLocation) {
 				fTemperature = -(((data[2]&0x7F)*256) + data[3]) / 10;
 			}
 			if (fHumidity!=0||fTemperature!=0) {//make sure temperature and humidity are not both zero (corresponds to invalid returned data)
+				pthread_mutex_lock(&m_threadMutex);
 				if (nLocation==CPUBOX) {
 					this->m_fCPUHumidity = fHumidity;
 					this->m_fCPUTemperature = fTemperature;
@@ -275,13 +276,12 @@ bool HumiditySensor::CollectHumidityData(int nLocation) {
 					this->m_fBatteryHumidity = fHumidity;
 					this->m_fBatteryTemperature = fTemperature;
 				}
+				pthread_mutex_unlock(&m_threadMutex);
 			}
 			else {
-				pthread_mutex_unlock(&m_threadMutex);
+				
 				return false;
 			}
-			
-			pthread_mutex_unlock(&m_threadMutex);
 		}
 		else {
 			return false;

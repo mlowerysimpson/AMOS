@@ -16,6 +16,7 @@ SensorDataFile::SensorDataFile(int *sensorTypes, int nNumSensors, void *sensorOb
 	m_sensorData = nullptr;
 	m_bDataAvailable = nullptr;
 	m_nNumSensors = nNumSensors;
+	m_fConductivity = 0;
 	m_nLastLogTime=0;
 	m_fWaterTemp=0;
 	m_fInteriorTemp=0;
@@ -118,6 +119,9 @@ void SensorDataFile::SetData(int nDataType, double dData) {//sets a particular d
 		else if (nDataType == DO2_DATA) {
 			m_fDO2 = (float)dData;
 		}
+		else if (nDataType == CONDUCTIVITY_DATA) {
+			m_fConductivity = (float)dData;
+		}
 	}
 }
 
@@ -139,16 +143,22 @@ bool SensorDataFile::OpenDataFileForAppending() {//open data file for appending 
 
 char * SensorDataFile::GetFormattedData(struct tm *sampleTime) {//formats the currently available data
 	//get conservative estimate of length of text required
-	int nEstimateLength = 20 + 16 * m_nNumSensors;
+	int nEstimateLength = 2048;
 	char *retVal = new char[nEstimateLength];//the formatted text that this function returns (calling function responsible for deleting it)
-	char szDateTime[20];//date and time, format as YYYY-MM-DD HH:MM:SS, 
+	char szDateTime[32];//date and time, format as YYYY-MM-DD HH:MM:SS, 
 	sprintf(szDateTime, "%d-%02d-%02d %02d:%02d:%02d, ",sampleTime->tm_year+1900, sampleTime->tm_mon+1, sampleTime->tm_mday, 
 		sampleTime->tm_hour, sampleTime->tm_min, sampleTime->tm_sec);
 	strcpy(retVal, szDateTime);
-	char szTmp[32];
+	char szTmp[1024];
 	for (int i=0;i<m_nNumSensors;i++) {
 		if (m_bDataAvailable[i]) {
-			if (m_sensorTypes[i]==WATER_TEMP_DATA||m_sensorTypes[i]==BOAT_INTERIOR_TEMP_DATA||m_sensorTypes[i]==DO2_DATA) {
+			if (m_sensorTypes[i] == WATER_TEMP_DATA) {
+				sprintf(szTmp, "%.3f, ", m_sensorData[i]);
+			}
+			else if (m_sensorTypes[i] == CONDUCTIVITY_DATA) {
+				sprintf(szTmp, "%.4f, ", m_sensorData[i]);
+			}
+			else if (m_sensorTypes[i]==BOAT_INTERIOR_TEMP_DATA||m_sensorTypes[i]==DO2_DATA) {
 				sprintf(szTmp, "%.2f, ", m_sensorData[i]);
 			}
 			else if (m_sensorTypes[i]==PH_DATA||m_sensorTypes[i]==WATER_TURBIDITY) {
@@ -192,12 +202,12 @@ char * SensorDataFile::GetFormattedData(struct tm *sampleTime) {//formats the cu
 }
 
 void SensorDataFile::WriteDataFileHeader() {
-	int nEstimateLength = 20 + 128 * m_nNumSensors;//estimate the length of the header line required
+	int nEstimateLength = 2048;
 	char *szHeaderLine = new char[nEstimateLength];
 	memset(szHeaderLine,0,nEstimateLength);
 	strcpy(szHeaderLine, "AMOS Data File\n");
 	m_dataFile->write(szHeaderLine,strlen(szHeaderLine));
-	char szTmp[256];
+	char szTmp[1024];
 	strcpy(szHeaderLine,"Date/Time, ");
 	for (int i=0;i<m_nNumSensors;i++) {
 		if (m_sensorTypes[i]==WATER_TEMP_DATA) {
@@ -223,6 +233,9 @@ void SensorDataFile::WriteDataFileHeader() {
 		}
 		else if (m_sensorTypes[i] == DO2_DATA) {
 			strcpy(szTmp, "Dissolved_O2(mg/L), ");
+		}
+		else if (m_sensorTypes[i] == CONDUCTIVITY_DATA) {
+			strcpy(szTmp, "Conductivity(mS/cm), ");
 		}
 		else if (m_sensorTypes[i]==DIAGNOSTICS_DATA) {
 			char *szDiagnosticsHeader = DiagnosticsSensor::GetSensorFileHeader();
@@ -379,8 +392,16 @@ bool SensorDataFile::SendSensorData(int nSensorType, int nHandle, bool bUseSeria
 				else m_fDO2 = (float)dDO2Data;
 			}
 		}
-		pBoatData = BoatCommand::CreateBoatData(DO2_DATA);
+		pBoatData = BoatCommand::CreateBoatData(DO2_DATA_PACKET);
 		memcpy(pBoatData->dataBytes, &m_fDO2, sizeof(float));
+	}
+	else if (nSensorType == CONDUCTIVITY_DATA) {
+		AMLTempConductivity* pTempConductivitySensor = GetTempConductivitySensor();
+		if (pTempConductivitySensor && pTempConductivitySensor->isOldData()) {
+			m_fConductivity = pTempConductivitySensor->GetConductivity();//get the most recently acquired conductivity data in mS/cm
+		}
+		pBoatData = BoatCommand::CreateBoatData(CONDUCTIVITY_DATA_PACKET);
+		memcpy(pBoatData->dataBytes, &m_fConductivity, sizeof(float));
 	}
 	else if (nSensorType==LEAK_DATA) {
 		LeakSensor *pLeakSensor = GetLeakSensor();
@@ -617,6 +638,11 @@ void SensorDataFile::CollectData() {
 				}
 			}
 		}
+		else if (m_sensorTypes[i]== CONDUCTIVITY_DATA) {//temperature / conductivity sensor data
+			AMLTempConductivity* pTempConductivitySensor = (AMLTempConductivity*)m_sensorObjects[i];
+			double dConductivity = pTempConductivitySensor->GetConductivity();
+			SetData(CONDUCTIVITY_DATA, dConductivity);
+		}
 		else if (m_sensorTypes[i]==DIAGNOSTICS_DATA) {//diagnostics data
 			DiagnosticsSensor *pDiagnostics = (DiagnosticsSensor *)m_sensorObjects[i];
 			m_bSolarCharging = pDiagnostics->IsSolarCharging();
@@ -625,8 +651,10 @@ void SensorDataFile::CollectData() {
 			if (pDiagnostics->GetCurrentDraw(fCurrentDraw)) {
 				SetData(DIAGNOSTICS_DATA,(double)fCurrentDraw);
 			}
+			
 			pDiagnostics->GetHumidityAndTemp(m_fHumidityCPU,m_fHumidityTempCPU,CPUBOX);
 			pDiagnostics->GetHumidityAndTemp(m_fHumidityBattery, m_fHumidityTempBattery,BATTERYBOX);
+			
 		}
 	}
 }
@@ -653,4 +681,19 @@ void SensorDataFile::CloseDataFile() {//close the data file (if it is currently 
 		delete m_dataFile;
 		m_dataFile=nullptr;
 	}
+}
+
+/**
+ * @brief returns the AML temperature / conductivity sensor (if available) or nullptr if not
+ *
+ * @return AMLTempConductivity* the AML temperature / conductivity object (if available) or nullptr if not
+ */
+AMLTempConductivity* SensorDataFile::GetTempConductivitySensor() {//returns the temperature / conductivity sensor (if available) or nullptr if not
+	for (int i = 0; i < m_nNumSensors; i++) {
+		if (m_sensorTypes[i] == CONDUCTIVITY_DATA) {
+			AMLTempConductivity* pTempConductivitySensor = (AMLTempConductivity*)m_sensorObjects[i];
+			return pTempConductivitySensor;
+		}
+	}
+	return nullptr;
 }

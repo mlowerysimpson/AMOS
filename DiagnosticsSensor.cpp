@@ -15,6 +15,7 @@
 DiagnosticsSensor::DiagnosticsSensor(AToD *pAToD) : Sensor(pAToD) {
     m_fd = 0;
     m_bOpenedPort = false;
+    m_bSentActivityBurst = false;
     m_nActivityState = 0;
     m_uiLastActivityPulseTime = 0;
 }
@@ -162,7 +163,7 @@ bool DiagnosticsSensor::IsSolarCharging() {
     //send carriage return, followed by 's' followed by carriage return out serial port to get measured values in counts for the voltages at the + and - solar charger inputs
     //note that these voltage are stepped down by resistor dividers, i.e. 5K in series with 100K, so voltage level is ~ 21x less than actual. The default voltage reference on the RFU220SU is 1.6 volts.
     //There is also resistance associated with the solar charge controller itself, so this makes the voltage measurement somewhat uncertain. 
-    //This function simply uses the voltage at the negative terminal, and returns true if it is equal to zero counts.
+    //This function simply uses the voltage at the negative terminal, and returns true if it is less than 40 counts
     serialPutchar(m_fd, (unsigned char)0x0d);
     serialPutchar(m_fd, (unsigned char)'s');
     serialPutchar(m_fd, (unsigned char)'o');
@@ -215,7 +216,10 @@ bool DiagnosticsSensor::IsSolarCharging() {
         //end test
         return false;
     }
-    return (nNumCountsNegTerminal==0);
+    //test
+    printf("%s\n", line1);
+    //end test
+    return (nNumCountsNegTerminal<40);
 }
 
 
@@ -362,6 +366,9 @@ bool DiagnosticsSensor::GetWirelessRXPower(float &fRXPower) {//
  */
 void DiagnosticsSensor::ActivityPulse() {
 	//change state of activity pin no more often than once per second
+    if (m_bSentActivityBurst) {
+        return;//already sent activity burst to indicate that the program is shutting down, so don't send any more activity pulses (doing so could trigger a hard power cycle of the Pi)
+    }
 	unsigned int uiCurrentTime = millis();
 	if ((uiCurrentTime - m_uiLastActivityPulseTime)<1000) {
 		return;//already changed state of activity pin within the last second
@@ -378,6 +385,7 @@ void DiagnosticsSensor::ActivityPulse() {
  */
 void DiagnosticsSensor::ActivityBurst() {
 	const int NUM_PULSES = 10;
+    m_bSentActivityBurst = true;
 	for (int i=0;i<NUM_PULSES;i++) {
 		m_nActivityState = (m_nActivityState+1)%2;
 		digitalWrite(ACTIVITY_PIN,m_nActivityState);	

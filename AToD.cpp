@@ -20,6 +20,34 @@
  * 
  * @param i2c_filename the name of the i2c port to use, ex: "/dev/i2c-1"
  * @param ucAddress the 7-bit i2c address to use for the ADS1115.
+ */
+AToD::AToD(char *i2c_filename, unsigned char ucAddress) {
+	m_ucAddress = ucAddress;
+	m_nPGAVal = 1;
+	m_i2c_mutex = nullptr;
+	m_nCurrentChannel = 1;
+	m_bOpenedI2C_OK = true;
+	m_bInitialized = false;
+	m_uiLastMeasurementTime = 0;
+	m_pShipLog = nullptr;
+	m_file_i2c = open(i2c_filename, O_RDWR);
+	m_dMostRecentBattVoltage=0.0;
+	if (m_file_i2c<0) {
+		//error opening I2C
+		//test
+		//char sMsg[256];
+		//sprintf(sMsg,"Error: %s opening I2C.\n",strerror(errno));
+		//m_pShipLog->LogEntry(sMsg,true);
+		//end test
+		m_bOpenedI2C_OK=false;
+	}
+}
+
+/**
+ * @brief Construct a new AToD::AToD object for collecting data from the ADS1115 chip
+ * 
+ * @param i2c_filename the name of the i2c port to use, ex: "/dev/i2c-1"
+ * @param ucAddress the 7-bit i2c address to use for the ADS1115.
  * @param pShipLog pointer to a ShipLog object used for logging error messages, etc.
  * @param i2c_mutex used for controlling access to the i2c bus
  */
@@ -61,7 +89,9 @@ bool AToD::InitializeAtoD(int nPGAVal, int nChannel) {//initialize ADS1115 A to 
 	unsigned char sendBytes[3];//bytes to send to ADS1115
 	sendBytes[0] = 0x01;//corresponds to the configuration register
 	if (!m_bOpenedI2C_OK) {
-		m_pShipLog->LogEntry((char *)"Error, was unable to open I2C port.\n",true);
+		if (m_pShipLog!=nullptr) {
+			LogEntry((char *)"Error, was unable to open I2C port.\n",true);
+		}
 		return false;
 	}
 	if (nChannel==1) {
@@ -77,8 +107,10 @@ bool AToD::InitializeAtoD(int nPGAVal, int nChannel) {//initialize ADS1115 A to 
 		config_msb|=0x70;
 	}
 	else {//invalid channel
-		sprintf(sMsg, "Invalid channel: %d. Must be between 1 and 4.\n",nChannel);
-		m_pShipLog->LogEntry(sMsg,true);
+		if (m_pShipLog!=nullptr) {
+			sprintf(sMsg, "Invalid channel: %d. Must be between 1 and 4.\n",nChannel);
+			LogEntry(sMsg,true);
+		}
 		m_bInitialized = false;
 		return false;
 	}
@@ -107,7 +139,7 @@ bool AToD::InitializeAtoD(int nPGAVal, int nChannel) {//initialize ADS1115 A to 
 	if (ioctl(m_file_i2c, I2C_SLAVE, m_ucAddress)<0) {
 		sprintf(sMsg,"Failed (error = %s) to acquire bus access and/or talk to slave A to D chip at %d.\n",
 			strerror(errno),(int)m_ucAddress);
-		m_pShipLog->LogEntry(sMsg,true);
+		LogEntry(sMsg,true);
 		m_bInitialized = false;
 		pthread_mutex_unlock(m_i2c_mutex);
 		return false;
@@ -116,7 +148,7 @@ bool AToD::InitializeAtoD(int nPGAVal, int nChannel) {//initialize ADS1115 A to 
 		//error, I2C transaction failed
 		sprintf(sMsg,"Failed to write the configuration bytes (error = %s) to the I2C bus.\n",
 			strerror(errno));
-		m_pShipLog->LogEntry(sMsg,true);
+		LogEntry(sMsg,true);
 		m_bInitialized = false;
 		pthread_mutex_unlock(m_i2c_mutex);
 		return false;
@@ -144,7 +176,6 @@ bool AToD::GetMeasurement(int nChannel, int nPGAGain, double dMeasurementGain, d
 	}
 	//if (nChannel!=m_nCurrentChannel||nPGAGain!=m_nPGAVal) {
 	//need to re-configure A to D
-	
 	double dSumCountVals = 0.0;//the summation of all the A to D count values (divided later by ATOD_NUM_TO_AVG to get average value)
 	
 	for (int i=0;i<ATOD_NUM_TO_AVG;i++) {
@@ -152,14 +183,14 @@ bool AToD::GetMeasurement(int nChannel, int nPGAGain, double dMeasurementGain, d
 		unsigned int uiTimeoutTime = uiStartTime + TIMEOUT_MS;
 		bool bDataReady = false;
 		if (!InitializeAtoD(nPGAGain, nChannel)) {
-			m_pShipLog->LogEntry((char *)"Error trying to configure A to D.\n",true);
+			LogEntry((char *)"Error trying to configure A to D.\n",true);
 			return false;
 		}
 		while (millis()<uiTimeoutTime&&!bDataReady) {
 			//read in configuration bytes
 			if (read(m_file_i2c,inBuf,2)!=2) {
 				//ERROR HANDLING: i2c transaction failed
-				m_pShipLog->LogEntry((char *)"Failed to read the configuration bytes from the I2C bus.\n",true);
+				LogEntry((char *)"Failed to read the configuration bytes from the I2C bus.\n",true);
 				pthread_mutex_unlock(m_i2c_mutex);
 				return false;
 			}
@@ -170,7 +201,7 @@ bool AToD::GetMeasurement(int nChannel, int nPGAGain, double dMeasurementGain, d
 			}
 		}
 		if (!bDataReady) {
-			m_pShipLog->LogEntry((char *)"Timeout waiting for ADC data to be ready.\n",true);
+			LogEntry((char *)"Timeout waiting for ADC data to be ready.\n",true);
 			pthread_mutex_unlock(m_i2c_mutex);
 			return false;
 		}
@@ -179,7 +210,7 @@ bool AToD::GetMeasurement(int nChannel, int nPGAGain, double dMeasurementGain, d
 		if (write(m_file_i2c, sendByte, 1)!=1) {
 			//error, I2C transaction failed
 			sprintf(sMsg,"Failed to write to the I2C bus for conversion register (error = %s).\n", strerror(errno));
-			m_pShipLog->LogEntry(sMsg,true);
+			LogEntry(sMsg,true);
 			m_bInitialized = false;
 			pthread_mutex_unlock(m_i2c_mutex);
 			return false;
@@ -187,7 +218,7 @@ bool AToD::GetMeasurement(int nChannel, int nPGAGain, double dMeasurementGain, d
 		//read in conversion register
 		if (read(m_file_i2c,inBuf,2)!=2) {
 			//ERROR HANDLING: i2c transaction failed
-			m_pShipLog->LogEntry((char *)"Failed to read the conversion bytes from the I2C bus.\n",true);
+			LogEntry((char *)"Failed to read the conversion bytes from the I2C bus.\n",true);
 			pthread_mutex_unlock(m_i2c_mutex);
 			return false;
 		}
@@ -216,7 +247,7 @@ bool AToD::GetMeasurement(int nChannel, int nPGAGain, double dMeasurementGain, d
  */
 bool AToD::GetBatteryVoltage(double &dBattVoltage, BatteryCharge *pBattCharge) {//gets the battery voltage for AMOS, assumes various resistor divider and channel settings for the A to D measurement
 	//assumes use of voltage divider of two 10K resistors, which effectively halves the battery voltage at the CH1 input
-	const double R1 = 51.0;//51k resistor
+	const double R1 = 50.0;//50k resistor
 	const double R2 = 10.0;//10k resistor
 	const int BATT_VOLTAGE_CHANNEL = 1;
 	char sMsg[256];
@@ -226,10 +257,10 @@ bool AToD::GetBatteryVoltage(double &dBattVoltage, BatteryCharge *pBattCharge) {
 	if (bGotResult) {
 		m_uiLastMeasurementTime = millis();
 		sprintf(sMsg,"Battery Voltage: %.3f V\n",dBattVoltage);
-		m_pShipLog->LogEntry(sMsg,true);
+		LogEntry(sMsg,true);
 	}
 	else {
-		m_pShipLog->LogEntry((char *)"Error getting battery voltage.\n",true);
+		LogEntry((char *)"Error getting battery voltage.\n",true);
 		return false;
 	}
 	m_dMostRecentBattVoltage = dBattVoltage;
@@ -261,3 +292,9 @@ bool AToD::SendBatteryVoltage(int nHandle, bool bUseSerial) {
 	return BoatCommand::SendBoatData(nHandle, bUseSerial, pBoatData, nullptr);
 }
 
+void AToD::LogEntry(char *szLogMsg, bool bPrintMsg) {//output text to log file (and optionally print to screen)
+	if (this->m_pShipLog==nullptr) {
+		return;
+	}
+	m_pShipLog->LogEntry(szLogMsg,bPrintMsg);
+}

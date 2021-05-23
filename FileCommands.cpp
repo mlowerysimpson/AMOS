@@ -14,6 +14,7 @@
 
 extern SensorDataFile* g_sensorDataFile;//object used for logging sensor data to file
 extern LIDARLite* g_lidar;//object used for getting distance measurements to objects using LIDAR Lite
+extern int g_nSensorStabilizeTimeSec;//length of time required for stabilization before taking sensor measurements
 
 //FileCommands constructor
 //szRootFolder = the root program folder (i.e. the folder where the prefs.txt (preferences) file is located
@@ -811,8 +812,9 @@ int FileCommands::DoCommand(REMOTE_COMMAND *pCommand, pthread_mutex_t *command_m
 	else if (pCommand->nCommand==FC_SAMPLE) {
 		//SensorDeploy s(this->m_szRootFolder,false);
 		g_sensorDataFile->SetFilename((char *)pCommand->pDataBytes);
-		//s.Deploy();
-		usleep(5000000);//wait five seconds for sensors to stabilize in water
+		if (g_nSensorStabilizeTimeSec > 0) {
+			usleep(g_nSensorStabilizeTimeSec * 1000000);//wait for sensors to stabilize in water
+		}
 		g_sensorDataFile->CollectAndSaveDataNow();
 		//s.Retract();
 	}
@@ -1126,6 +1128,7 @@ void FileCommands::TakePhoto(void *pShipLog) {
 	char *commandStr = new char[strlen(imageFilename)+128];
 	sprintf(commandStr,"raspistill -o %s",imageFilename);
 	system(commandStr);
+	delay(10000);//need to delay for a while (10 seconds) to give the photo time to get taken properly before taking another photo
 	char sMsg[256];
 	sprintf(sMsg,"Took photo: %s%05u.jpg",imageFilePrefix,m_uiPictureNumber);
 	((ShipLog *)pShipLog)->LogEntry(sMsg,true);
@@ -1661,18 +1664,19 @@ void FileCommands::CancelCurrentOperation() {
 	//test
 	printf("trying to cancel current step\n");
 	//end test
-	unsigned int uiTimeoutTime = millis() + 5000;//timeout after this length of time if the currently executing file commands thread cannot be canceled 
+	unsigned int uiStartTime = millis();
+	unsigned int uiTimeoutTime = uiStartTime + 5000;//timeout after this length of time if the currently executing file commands thread cannot be canceled 
 	while (millis() < uiTimeoutTime && m_nCurrentCommandIndex == nStartIndex) {
 		usleep(100000);//sleep for 100 ms
 	}
 	//test
 	if (m_nCurrentCommandIndex == nStartIndex) {
 		printf("Error, timed out trying to cancel current step.\n");
-		unsigned int uiTimeElapsed = millis() - uiTimeoutTime;
+		unsigned int uiTimeElapsed = millis() - uiStartTime;
 		printf("Time elapsed =  %u ms.\n", uiTimeElapsed);
 	}
 	else {
-		unsigned int uiTimeElapsed = millis() - uiTimeoutTime;
+		unsigned int uiTimeElapsed = millis() - uiStartTime;
 		printf("Took %u ms to timeout.\n", uiTimeElapsed);
 	}
 	//end test
