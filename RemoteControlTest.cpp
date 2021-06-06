@@ -44,7 +44,7 @@
 
 using namespace std;
 
-#define IMUTEST_BUILD 1 //uncomment when building the IMUTest program or any other program that refers to this file
+//#define IMUTEST_BUILD 1 //uncomment when building the IMUTest program or any other program that refers to this file
 #define SERVER_PORT 81 //the port number that we are listening on for network connections 
 #define SHIP_LOG_INTERVAL_SECONDS 60 //length of time in seconds between ship's log posts
 #define ATOD_ADDRESS 0x48 //I2C address of 4-channel ADS1115 ADC converter
@@ -985,7 +985,15 @@ bool GetDataLoggingPreferences() {//get data logging preferences from prefs.txt 
 			delete g_sensorDataFile;
 			g_sensorDataFile = NULL;
 		}
-		g_sensorDataFile = new SensorDataFile(sensorTypes, nNumSensors, sensorObjects, (char *)"sensordata.txt", g_nLoggingIntervalSec);
+		char* szSensorDataFilename = NULL;
+		prefsFile.getString("[sensors]", "sensor_filename", &szSensorDataFilename);
+		if (szSensorDataFilename != NULL) {
+			g_sensorDataFile = new SensorDataFile(sensorTypes, nNumSensors, sensorObjects, szSensorDataFilename, g_nLoggingIntervalSec);
+			delete[] szSensorDataFilename;
+		}
+		else {
+			g_sensorDataFile = new SensorDataFile(sensorTypes, nNumSensors, sensorObjects, (char*)"sensordata.txt", g_nLoggingIntervalSec);
+		}
 		//depth readings
 		bool bDepthReadings = (bool)prefsFile.getInteger((char*)"[sensors]", (char*)"depth");
 		if (bDepthReadings) {
@@ -1201,10 +1209,6 @@ int main(int argc, const char * argv[]) {
 		bGotAccurateGPSData = true;//no need to wait for gps data if file commands do not contain any GPS waypoints
 	}
 	const int REQUIRED_NUM_SATELLITES = 4;//required number of GPS satellites for accurate position data
-	double* latBuf = new double[256];//store positions in buffer and compare them to previous values to make sure that position data has stabilized to within 20 m
-	double* longBuf = new double[256];
-	int nPosIndex = 0;
-	int nPosSamples = 0;
 	while (g_bKeepGoing&&!bGotAccurateGPSData) {
 		int nKeyboardChar = Util::getch_noblock();
 		bool bUserQuit = false;
@@ -1225,34 +1229,16 @@ int main(int argc, const char * argv[]) {
 			char sMsg[256];
 			int nNumSatellitesVisible = g_navigator->GetNumVisibleSatellites();//the number of currently visible GPS satellites
 			int nNumSatellitesUsed = g_navigator->GetNumSatellitesUsed();//the number of GPS satellites that are used for the position calculation
+			nPosSamples++;
 			sprintf(sMsg,"pos = %.6f, %.6f, satellites visible = %d, satellites used = %d.\n",dLatitude,dLongitude,nNumSatellitesVisible,nNumSatellitesUsed);
 			g_shiplog.LogEntry(sMsg,true);
 			if (nNumSatellitesUsed>=REQUIRED_NUM_SATELLITES) {
-				//add lat, long to buffer and if enough samples are present check to see if position has stabilized
-				latBuf[nPosIndex] = dLatitude;
-				longBuf[nPosIndex] = dLongitude;
-				nPosIndex = (nPosIndex + 1) % 256;
-				nPosSamples++;
-				if (nPosSamples >= 120) {//at least 2 minutes of position data
-					int nPrevIndex = nPosIndex - 120;
-					if (nPrevIndex < 0) {
-						nPrevIndex = nPrevIndex + 256;
-					}
-					double dDist = Navigation::ComputeDistBetweenPts(dLatitude, dLongitude, latBuf[nPrevIndex], longBuf[nPrevIndex]);
-					sprintf(sMsg, "distance has changed %.1f m over last 2 minutes.\n", dDist);
-					g_shiplog.LogEntry(sMsg, true);
-					if (dDist < 20) {
-						//changed less than 20 m over last 2 minutes, assume to be stable
-						bGotAccurateGPSData = true;
-					}
-				}
+				//have enough satellites
+				bGotAccurateGPSData = true;
 			}
 		}
 		usleep(1000000);//pause for 1 second
 	}
-	delete [] latBuf;
-	delete [] longBuf;
-
 	StartDataCollectionThread();//start thread for receiving sensor data
 	if (g_fileCommands!=nullptr) {
 		if (bContinuedFromPrevious) {
@@ -1263,7 +1249,6 @@ int main(int argc, const char * argv[]) {
 	}
 
 	//loop receiving commands until ESC key is pressed
-	
 	while (g_bKeepGoing) {
 		//if (_kbhit()) {
 		bool bUserQuit = false;
