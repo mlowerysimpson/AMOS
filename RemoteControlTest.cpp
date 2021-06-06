@@ -1229,7 +1229,6 @@ int main(int argc, const char * argv[]) {
 			char sMsg[256];
 			int nNumSatellitesVisible = g_navigator->GetNumVisibleSatellites();//the number of currently visible GPS satellites
 			int nNumSatellitesUsed = g_navigator->GetNumSatellitesUsed();//the number of GPS satellites that are used for the position calculation
-			nPosSamples++;
 			sprintf(sMsg,"pos = %.6f, %.6f, satellites visible = %d, satellites used = %d.\n",dLatitude,dLongitude,nNumSatellitesVisible,nNumSatellitesUsed);
 			g_shiplog.LogEntry(sMsg,true);
 			if (nNumSatellitesUsed>=REQUIRED_NUM_SATELLITES) {
