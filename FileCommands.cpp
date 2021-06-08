@@ -683,6 +683,7 @@ int FileCommands::DoNextCommand(pthread_mutex_t *command_mutex, unsigned int *la
 	int nNumCommands = m_commandList.size();
 	CheckTime();//check to see if it is time to rest, go to sleep, or morning time yet
 	if (nNumCommands<=0||m_nCurrentCommandIndex>=nNumCommands||!m_pNavigator->isDataReady()||m_bRestTimeMode) {//no valid commands or we have finished all of the available commands
+		m_pThrusters->Stop();//make sure that thrusters are off
 		usleep(1000000);//just pause in this thread, since there are no commands to execute at the moment, or the navigator object is not ready yet (ex: no compass data), or AMOS is in rest mode
 		return 0;
 	}

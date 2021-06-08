@@ -1585,13 +1585,9 @@ float Navigation::TurnToRandomAngle(void *pThrusters, pthread_mutex_t *command_m
 	ShipLog *pLog = (ShipLog *)pShipLog;
 	float fRandomAngle=(float)(360*((float)rand()) / RAND_MAX);//get a random angle between 0 and 360
 	Thruster *pThrust = (Thruster *)pThrusters;
-	//test
 	sprintf(sMsg,"setting random heading angle: %.1f deg\n",fRandomAngle);
 	pLog->LogEntry(sMsg,true);
-	//end test
-	pthread_mutex_lock(command_mutex);
 	this->TurnToCompassHeading(fRandomAngle,pThrusters, command_mutex, lastNetworkCommandTimeMS, pShipLog, bCancel, nPriority);
-	pthread_mutex_unlock(command_mutex);
 }
 
 void Navigation::TrimAirRudder(float &fAirRudderAngle,float fHeadingError,float fDesiredHeading,void *pShipLog) {//fine-tune air rudder angle in order to correct any heading error
