@@ -15,6 +15,7 @@
 extern SensorDataFile* g_sensorDataFile;//object used for logging sensor data to file
 extern LIDARLite* g_lidar;//object used for getting distance measurements to objects using LIDAR Lite
 extern int g_nSensorStabilizeTimeSec;//length of time required for stabilization before taking sensor measurements
+extern ShipLog g_shiplog;//used for logging data and to assist in debugging
 
 //FileCommands constructor
 //szRootFolder = the root program folder (i.e. the folder where the prefs.txt (preferences) file is located
@@ -863,9 +864,13 @@ void FileCommands::ContinueFromPrevious() {//continue at the last known stage of
 
 void FileCommands::SaveCurrentCommand() {//save the current command index to the preferences file (prefs.txt)
 	char prefsFilename[PATH_MAX];			
+	char sLogMsg[128];
+	strcpy(sLogMsg, "Saving data to prefs.txt file.\n");
+	g_shiplog.LogEntry(sLogMsg, true);
 	sprintf(prefsFilename,(char *)"%s//prefs.txt",m_szRootFolder);
 	filedata prefsFile(prefsFilename);
 	prefsFile.writeData((char *)"[file_command_list]",(char *)"last_step",m_nCurrentCommandIndex+1);
+
 }
 
 /**
