@@ -33,7 +33,8 @@
 #define LIST_REMOTE_LOG 33//command sent to AMOS to return a list of all of the available log files
 #define LIST_REMOTE_IMAGE 34//command sent to AMOS to return a list of all of the available image files
 #define RTK_CORRECTION 35//sending RTK correction bytes to AMOS from an RTK base station
-#define LAST_COMMAND 36//the highest possible command #
+#define DELETE_FILES 36//delete one or more AMOS files
+#define LAST_COMMAND 37//the highest possible command #
 
 #define PASSCODE_TEXT "AMOS2018"
 

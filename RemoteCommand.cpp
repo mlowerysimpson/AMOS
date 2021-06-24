@@ -10,6 +10,12 @@
 #include <wiringPi.h>
 #include <wiringSerial.h>
 
+//definitions of file types
+#define REMOTE_SCRIPT_FILES 0
+#define REMOTE_DATA_FILES 1
+#define REMOTE_LOG_FILES 2
+#define REMOTE_IMAGE_FILES 3
+
 extern FileCommands* g_fileCommands;//used for handling commands sent to boat through a text file passed on the command line of this program
 extern Thruster* g_thrusters;//pointer to Thruster object for controlling power to the boat's thruster(s)
 extern SensorDataFile* g_sensorDataFile;//object used for logging sensor data to file
@@ -203,6 +209,7 @@ bool RemoteCommand::requiresMoreData(int nCommand) {
 	else if (nCommand == USE_REMOTE_SCRIPT) return true;
 	else if (nCommand == REFRESH_SETTINGS) return true;
 	else if (nCommand == RTK_CORRECTION) return true;
+	else if (nCommand == DELETE_FILES) return true;
 	return false;
 }
 
@@ -244,6 +251,10 @@ char * RemoteCommand::GetCommandDescription(REMOTE_COMMAND *pCommand) {//return 
 	else if (pCommand->nCommand == SCRIPT_STATUS_PACKET) {
 		szDescription = new char[256];
 		sprintf(szDescription, "Script status query command sent.\n");
+	}
+	else if (pCommand->nCommand == DELETE_FILES) {
+		szDescription = new char[256];
+		sprintf(szDescription, "Delete files command sent.\n");
 	}
 	return szDescription;
 }
@@ -466,7 +477,7 @@ bool RemoteCommand::ExecuteCommand(REMOTE_COMMAND* pCommand, bool bUseSerial) {/
 			}
 			delete[]downloadedBytes;
 		}
-		else {//TODO: network mode impementation
+		else {//network mode impementation
 			const int MAX_ALLOWED_TIMEOUTS = 5;
 			int nNumRemaining = nSizeToDownload;
 			int nNumReceived = 0;
@@ -600,6 +611,50 @@ bool RemoteCommand::ExecuteCommand(REMOTE_COMMAND* pCommand, bool bUseSerial) {/
 			}
 			m_rtk->SendSerialRTKData(pCommand->pDataBytes, pCommand->nNumDataBytes);
 		}
+	}
+	else if (pCommand->nCommand == DELETE_FILES) {
+		bool bRetval = false;
+		int nSizeOfFilenamesToDelete = (int)GetUIntFromBytes(pCommand->pDataBytes);
+		//test
+		printf("nSizeOfFilenamesToDelete = %d\n", nSizeOfFilenamesToDelete);
+		//end test
+		if (nSizeOfFilenamesToDelete > 1000000) {
+			//don't try to receive anything > 1 MByte
+			printf("too many files specified!\n");
+			return false;
+		}
+		int nFileType = (int)pCommand->pDataBytes[sizeof(int)];
+		char* fileNameBytes = new char[nSizeOfFilenamesToDelete];
+		if (this->m_bSerportMode) {
+			if (ReceiveLargeDataChunk(m_nSocket, fileNameBytes, nSizeOfFilenamesToDelete)) {
+				bRetval = DeleteFiles(true, m_nSocket, fileNameBytes, nSizeOfFilenamesToDelete, nFileType);
+			}
+		}
+		else {//network mode impementation
+			const int MAX_ALLOWED_TIMEOUTS = 5;
+			int nNumRemaining = nSizeOfFilenamesToDelete;
+			int nNumReceived = 0;
+			int nTimeoutCount = 0;
+			do {
+				int nRX = read(m_nSocket, &fileNameBytes[nNumReceived], nNumRemaining);
+				if (nRX > 0) {
+					nNumRemaining -= nRX;
+					nNumReceived += nRX;
+					nTimeoutCount = 0;
+				}
+				else {//timeout or error occurred
+					nTimeoutCount++;
+				}
+			} while (nNumRemaining > 0 && nTimeoutCount < MAX_ALLOWED_TIMEOUTS);
+			if (nNumReceived < nSizeOfFilenamesToDelete) {
+				printf("timed out, read %d of %d bytes.\n", nNumReceived, nSizeOfFilenamesToDelete);
+				delete[]fileNameBytes;
+				return false;
+			}
+			bRetval = DeleteFiles(false, m_nSocket, fileNameBytes, nSizeOfFilenamesToDelete, nFileType);
+		}
+		delete[] fileNameBytes;
+		return bRetval;
 	}
 	return true;
 }
@@ -1033,5 +1088,85 @@ bool RemoteCommand::needsConfirmation(int nCommandType) {//return true if an nCo
 	if (nCommandType == RTK_CORRECTION) {
 		return false;
 	}
+	return true;
+}
+
+bool RemoteCommand::DeleteFiles(bool bUseSerial, int nSocket, char* fileNameBytes, int nSizeOfFilenamesToDelete, int nFileType) {//delete local files of a certain type
+	char szFilePath[1024];
+	char szFolder[512];
+	char szName[512];
+	char* filesNotDeleted = new char[nSizeOfFilenamesToDelete];//names of any files that could not be deleted
+	memset(filesNotDeleted, 0, nSizeOfFilenamesToDelete);
+	strcpy(szFolder, m_szRootFolder);
+	if (nFileType == REMOTE_IMAGE_FILES)
+	{
+		//need to get remote image files folder from prefs.txt file
+		char* szImageFolder = NULL;
+		char prefsFilename[512];
+		sprintf(prefsFilename, "%s/prefs.txt", m_szRootFolder);
+		filedata prefsFile(prefsFilename);
+		prefsFile.getString("[camera]", "storage_folder", &szImageFolder);
+		if (szImageFolder != NULL)
+		{
+			strcpy(szFolder, szImageFolder);
+			delete[] szImageFolder;
+		}
+	}
+	for (int i = 0; i < nSizeOfFilenamesToDelete; i++)
+	{
+		int j = i;
+		while (j < nSizeOfFilenamesToDelete && fileNameBytes[j] != '\n')
+		{
+			szName[j - i] = fileNameBytes[j];
+			j++;
+		}
+		//null terminate
+		szName[j - i] = 0;
+		if (strlen(szName) > 0)
+		{
+			//get full pathname
+			sprintf(szFilePath, "%s/%s", szFolder, szName);
+			if (remove(szFilePath) != 0)
+			{
+				//problem deleting file, add to list of files that could not be deleted
+				strcat(szName, "\n");
+				strcat(filesNotDeleted, szName);
+			}
+		}
+		i = j;
+	}
+	//send confirmation that files were deleted and a list of any files that could not be deleted
+	//create and send BOAT_DATA structure
+	BOAT_DATA* pBoatData = BoatCommand::CreateBoatData(DELETE_FILES);
+	int nBytesForUndeleted = strlen(filesNotDeleted);
+	memcpy(pBoatData->dataBytes, &nBytesForUndeleted, sizeof(int));
+	pBoatData->dataBytes[sizeof(int)] = (unsigned char)nFileType;
+	pBoatData->checkSum = BoatCommand::CalculateChecksum(pBoatData);//calculate simple 8-bit checksum for BOAT_DATA structure
+	if (!BoatCommand::SendBoatData(nSocket, bUseSerial, pBoatData, nullptr)) {
+		delete pBoatData;
+		return false;
+	}
+		
+	if (nBytesForUndeleted > 0)
+	{
+		//also send out bytes listing any files that could not be deleted
+		if (bUseSerial) {//using serial port link
+			if (!BoatCommand::SendLargeSerialData(nSocket, (unsigned char*)filesNotDeleted, nBytesForUndeleted, nullptr)) {//send large amount of data out serial port, need to get confirmation after sending each chunk
+				delete pBoatData;
+				delete[] filesNotDeleted;
+				return false;
+			}
+		}
+		else {//using network link
+			if (send(nSocket, filesNotDeleted, nBytesForUndeleted, 0) < 0) {
+				//error sending data
+				delete pBoatData;
+				delete[] filesNotDeleted;
+				return false;
+			}
+		}
+	}
+	delete pBoatData;
+	delete[]filesNotDeleted;
 	return true;
 }

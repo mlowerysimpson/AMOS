@@ -7,6 +7,7 @@
 #include <ifaddrs.h>
 #include <netinet/in.h> 
 #include <arpa/inet.h>
+#include "RTK.h"
 #include "Thruster.h"
 #include "Navigation.h"
 #include "AToD.h"
@@ -59,6 +60,7 @@ public:
 	
 private:
 	//data
+	RTK* m_rtk;//object used for handling RTK GPS correction data
 	char* m_szRootFolder;//the folder where the main program resides and runs from 
 	bool m_bSerportMode;//flag is true when this object is getting commands over a serial port connection (otherwise false if a network (default) connection is being used)
 	pthread_t m_moveForwardThreadId;
@@ -67,6 +69,8 @@ private:
 	int m_nSocket;//network socket identifier or serial port file descriptor if in serial port mode (i.e. m_bSerportMode==true)
 	
 	//functions
+	bool DeleteFiles(bool bUseSerial, int nSocket, char* fileNameBytes, int nSizeOfFilenamesToDelete, int nFileType);//delete local files of a certain type
+	bool needsConfirmation(int nCommandType);//return true if an nCommandType command requires some form of confirmation back to the host
 	bool RefreshSettings(int nSettingsType);//refresh settings of a particular type (see CommandList.h) from the current contents of the prefs.txt file
 	void CopyPacketToBuf(unsigned char* inBuf, int nBufferStartIndex, int nBufSize, char* destBuf);//copy the data portion of inBuf to destBuf
 	int CheckPacket(unsigned char* inBuf, int nBufSize, int nChunkIndex, int& nMoreBytesRequired, int& nPacketStartIndex);//check to see if a chunk of data is valid or not

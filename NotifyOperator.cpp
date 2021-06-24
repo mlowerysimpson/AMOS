@@ -374,7 +374,7 @@ bool NotifyOperator::LoadConfigInfo() {//load configuration data from prefs.txt 
 
 bool NotifyOperator::ReloadConfigInfo(char* szRootFolder) {//reload config info from prefs.txt file
 	char prefsFilename[PATH_MAX];
-	sprintf(prefsFilename, (char*)"%s//prefs.txt", szRootFolder);
+	sprintf(prefsFilename, (char*)"%s/prefs.txt", szRootFolder);
 	if (filedata::getFileLength(prefsFilename) <= 0) {
 		//prefs.txt configuration file does not exist or is empty
 		return false;

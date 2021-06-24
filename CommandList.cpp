@@ -166,6 +166,12 @@ BOAT_DATA * BoatCommand::CreateBoatData(int nDataType) {//create an empty BOAT_D
 		pAMOSData->dataBytes = new unsigned char[pAMOSData->nDataSize];
 		pAMOSData->checkSum = CalculateChecksum(pAMOSData);//checksum needs to be recalculated
 	}
+	else if (nDataType == DELETE_FILES) {
+		pAMOSData->nPacketType = DELETE_FILES;
+		pAMOSData->nDataSize = sizeof(int) + 1;
+		pAMOSData->dataBytes = new unsigned char[pAMOSData->nDataSize];
+		pAMOSData->checkSum = CalculateChecksum(pAMOSData);//checksum needs to be recalculated
+	}
 	else {//unknown data type, return null
 		delete pAMOSData;
 #ifndef _WIN32
