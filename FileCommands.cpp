@@ -5,6 +5,7 @@
 #include "filedata.h"
 #include "Util.h"
 #include "SensorDeploy.h"
+#include "Vision.h"
 #include <dirent.h>
 #include <sys/stat.h>
 #include <fstream>
@@ -16,6 +17,7 @@ extern SensorDataFile* g_sensorDataFile;//object used for logging sensor data to
 extern LIDARLite* g_lidar;//object used for getting distance measurements to objects using LIDAR Lite
 extern int g_nSensorStabilizeTimeSec;//length of time required for stabilization before taking sensor measurements
 extern ShipLog g_shiplog;//used for logging data and to assist in debugging
+extern Vision g_vision;//used for recording stills and video
 
 //FileCommands constructor
 //szRootFolder = the root program folder (i.e. the folder where the prefs.txt (preferences) file is located
@@ -118,6 +120,7 @@ bool FileCommands::parseLine(std::string sLine) {//parse command from line of te
 	std::transform(sLine.begin(), sLine.end(), sLine.begin(), ::tolower);
 	int nHeadingIndex = sLine.find("heading");
 	int nPhotoIndex = sLine.find("photo");
+	int nVideoIndex = sLine.find("video");
 	if (nHeadingIndex>=0&&nPhotoIndex<0) {//heading command
 		int i = skipToNumericVal(sLine, nHeadingIndex+7);
 		if (i<0) return false;
@@ -185,7 +188,18 @@ bool FileCommands::parseLine(std::string sLine) {//parse command from line of te
 			return false;//GPS waypoint is not formatted correctly(?)
 		}
 	}
-	if (nPhotoIndex>=0) {//take one or more photos at the current location
+	if (nVideoIndex >= 0) {
+		//start recording a video at the current location
+		char videoFilenamePrefix[256];
+		double dDurationSec = 0.0;
+		if (sscanf(sLine.c_str(), "video: name = %s, duration_sec = %lf", videoFilenamePrefix, dDurationSec) != 2) {
+			//problem parsing line, not formatted correctly?
+			return false;
+		}
+		g_vision.SetVideoFilenamePrefix(videoFilenamePrefix);
+		AddCommand(FC_VIDEO, dDurationSec);
+	}
+	else if (nPhotoIndex>=0) {//take one or more photos at the current location
 		int nNumPhotos = 0;
 		double dStartHeading = 0.0;//heading at which we start taking photos
 		double dEndHeading = 0.0;//heading at which the last photo is taken
@@ -437,6 +451,16 @@ void FileCommands::AddCommand(int nCommandType, double dVal) {
 		pRC->pDataBytes = new unsigned char[pRC->nNumDataBytes];
 		float fHeading = (float)dVal;
 		memcpy(pRC->pDataBytes,&fHeading,pRC->nNumDataBytes);
+		m_commandList.push_back(pRC);
+	}
+	else if (nCommandType == FC_VIDEO) {
+		REMOTE_COMMAND* pRC = new REMOTE_COMMAND();
+		memset(pRC, 0, sizeof(REMOTE_COMMAND));
+		pRC->nCommand = FC_VIDEO;
+		pRC->nNumDataBytes = sizeof(float);
+		pRC->pDataBytes = new unsigned char[pRC->nNumDataBytes];
+		float fDurationSec = (float)dVal;
+		memcpy(pRC->pDataBytes, &fDurationSec, pRC->nNumDataBytes);
 		m_commandList.push_back(pRC);
 	}
 }
@@ -832,6 +856,11 @@ int FileCommands::DoCommand(REMOTE_COMMAND *pCommand, pthread_mutex_t *command_m
 		m_bExecutingFileCommand = false;
 		return FC_WAIT;
 	}
+	else if (pCommand->nCommand == FC_VIDEO) {
+		float fVideoDurationSec = 0;
+		memcpy(&fVideoDurationSec, pCommand->pDataBytes, sizeof(float));
+		g_vision.StartVideoRecording(fVideoDurationSec);
+	}
 	m_bExecutingFileCommand = false;
 	return 0;
 }
@@ -1113,6 +1142,8 @@ void FileCommands::TakePhoto(void *pShipLog) {
 		imageFilePrefix = new char[strlen(DEFAULT_IMAGE_PREFIX)+1];
 		strcpy(imageFilePrefix,DEFAULT_IMAGE_PREFIX);
 	}
+	//whether image is upside down or not
+	int nUpsideDown = prefsFile.getInteger("[camera]", "upside_down");
 
 	do {
 		m_uiPictureNumber++;
@@ -1133,6 +1164,9 @@ void FileCommands::TakePhoto(void *pShipLog) {
 
 	char *commandStr = new char[strlen(imageFilename)+128];
 	sprintf(commandStr,"raspistill -o %s",imageFilename);
+	if (nUpsideDown > 0) {
+		sprintf(commandStr, "raspistill -vf -hf -o %s", imageFilename);
+	}
 	system(commandStr);
 	delay(10000);//need to delay for a while (10 seconds) to give the photo time to get taken properly before taking another photo
 	char sMsg[256];

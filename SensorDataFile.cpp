@@ -697,3 +697,7 @@ AMLTempConductivity* SensorDataFile::GetTempConductivitySensor() {//returns the 
 	}
 	return nullptr;
 }
+
+char* SensorDataFile::GetFilename() {
+	return m_szDataFilePath;
+}

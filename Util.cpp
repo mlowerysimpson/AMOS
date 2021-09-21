@@ -254,3 +254,26 @@ void Util::RestoreFromBackup(char* szFilename) {//copies the corresponding backu
 	delete[]szCopyCommand;
 	delete[]szBackupFilename;
 }
+
+bool Util::isProgramRunning(char* szProgramName) {//checks to see if a particular program is running 
+	FILE* fp;
+	char buf1[256];
+	char buf2[256];
+	if (!szProgramName) {
+		return false;
+	}
+	sprintf(buf1, "pidof %s", szProgramName);
+	if ((fp = popen(buf1, "r")) == NULL) {
+		return false;
+	}
+	int nPID = 0;
+	while (fgets(buf2, 256, fp)) {
+		if (sscanf(buf2, "%d", &nPID) > 0) {
+			if (nPID > 0) {
+				break;
+			}
+		}
+	}
+	pclose(fp);
+	return (nPID > 0);
+}

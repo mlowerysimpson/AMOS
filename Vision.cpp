@@ -2,6 +2,7 @@
 #include "Vision.h"
 #include "CommandList.h"
 #include "FileCommands.h"
+#include "Util.h"
 #include <sys/select.h>
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -12,6 +13,8 @@
 #include <unistd.h>
 #include <wiringPi.h>
 #include <wiringSerial.h>
+
+#define DEFAULT_VIDEO_TIME_SEC 300 //default recording time of video in seconds
 
 
 void *PictureLoggingThread(void *pParam) {//function continuously logging pictures to files
@@ -26,33 +29,43 @@ void *PictureLoggingThread(void *pParam) {//function continuously logging pictur
 	return nullptr;
 }
 
+void * LaunchVideoFunction(void* pParam) {//function launches a video 
+	Vision* PVision = (Vision*)pParam;
+	pVis->m_bVideoThreadRunning = true;
+	pVis->AutoCaptureVideo();
+	printf("video thread finished\n");
+	pVis->m_bVideoThreadRunning = false;
+	return nullptr;
+}
+
 Vision::Vision() {//constructor
 	m_bCameraOpened=false;
-	m_cap.set(CAP_PROP_BUFFERSIZE, 10); // internal buffer will now store only 10 frames (may help to reduce lag from storage of video frames in buffer)
-	m_cap.open(0);//use first camera on Pi for video capture
-	if (m_cap.isOpened() == false)  
-	{
-		cout << "Cannot open the video camera" << endl;
-	}
-	else {
-		m_bCameraOpened=true;
-		double dWidth = m_cap.get(CAP_PROP_FRAME_WIDTH); //get the width of frames of video
-		double dHeight = m_cap.get(CAP_PROP_FRAME_HEIGHT); //get the height of frames of video
-		cout << "Resolution of video: " << dWidth << " x " << dHeight << endl;
-	}
+	m_bUpsideDown = false;
+	OpenCamera();
 	m_bLogPictures=false;
 	m_nPictureIntervalSeconds=0;
 	m_szStorageFolder=NULL;
 	m_szFilenamePrefix=NULL;
-	m_bPictureThreadRunning=false;//true when the thread for logging pictures is active
-	m_bEndPictureLoggingThread=false;//true when it is time to end the picture logging thread
+	m_szVideoFilenamePrefix = NULL;
+	m_bVideoThreadRunning = false;
+	m_bPictureThreadRunning=false;
+	m_bEndPictureLoggingThread=false;
+	m_videoThreadId = nullptr;
 	m_cameraThreadId = 0;
 	m_uiLastAutoPictureTime = 0;
 	m_uiPictureFileNumber = 0;
+	m_uiVideoFileNumber = 0;
+	m_fVideoDurationSec = DEFAULT_VIDEO_TIME_SEC;
 }
 
 Vision::~Vision() {//destructor
 	EndPictureLoggingThread();
+	if (m_bVideoThreadRunning) {
+		if (Util::isProgramRunning("raspivid")) {
+			//need to kill raspivid program
+			system("kill raspivid");
+		}
+	}
 	if (m_szStorageFolder) {
 		delete []m_szStorageFolder;
 		m_szStorageFolder = NULL;
@@ -60,6 +73,10 @@ Vision::~Vision() {//destructor
 	if (m_szFilenamePrefix) {
 		delete []m_szFilenamePrefix;
 		m_szFilenamePrefix=NULL;
+	}
+	if (m_szVideoFilenamePrefix) {
+		delete []m_szVideoFilenamePrefix;
+		m_szVideoFilenamePrefix = NULL;
 	}
 	if (m_cap.isOpened()) {
 		m_cap.release();
@@ -135,6 +152,10 @@ bool Vision::CaptureFrame(int nThresholdInfo, char *szCapFilename, char *overlay
             cv::Scalar(255,255,255), // BGR Color
             1); // Line Thickness (Optional)
             //cv::CV_AA); // Anti-alias (Optional)
+	}
+	if (m_bUpsideDown) {
+		//camera is mounted upside down, so need to flip image
+		cv::flip(img1_out, img1_out, -1);
 	}
 	string sOutputFilename = string(szCapFilename);
 	bool bRetval = false;
@@ -287,7 +308,7 @@ void Vision::WaitForNextAutoCapture() {//waits the required number of seconds be
 		unsigned int uiStartTime = millis();//initial time in ms
 		unsigned int uiMilliSecondsToWait = m_nPictureIntervalSeconds * 1000;
 		unsigned int uiTimeoutTime = uiStartTime + uiMilliSecondsToWait;
-		while (millis()<uiTimeoutTime) {
+		while (millis()<uiTimeoutTime&& !m_bEndPictureLoggingThread) {
 			usleep(250000);//sleep for 250 ms
 		}
 	}
@@ -324,4 +345,93 @@ bool Vision::CaptureFrameWithDistText(double dDist) {//capture frame of video wi
 		m_uiLastAutoPictureTime = millis();
 		delete []szNextAutoFilename;
 	}
+}
+
+void Vision::SetUpsideDown(bool bUpsideDown) {//function used to handle the case where the camera is positioned upside-down (e.g. underneath AMOS)
+	m_bUpsideDown = bUpsideDown;
+}
+
+void Vision::CloseCamera() {//close video camera so that it can be accessed by other software
+	EndPictureLoggingThread();
+	if (m_cap.isOpened()) {
+		m_cap.release();
+	}
+	m_bCameraOpened = false;
+}
+
+void Vision::OpenCamera() {//open video camera port for use by this software
+	m_cap.set(CAP_PROP_BUFFERSIZE, 10); // internal buffer will now store only 10 frames (may help to reduce lag from storage of video frames in buffer)
+	m_cap.open(0);//use first camera on Pi for video capture
+	if (m_cap.isOpened() == false)
+	{
+		cout << "Cannot open the video camera" << endl;
+	}
+	else {
+		m_bCameraOpened = true;
+		double dWidth = m_cap.get(CAP_PROP_FRAME_WIDTH); //get the width of frames of video
+		double dHeight = m_cap.get(CAP_PROP_FRAME_HEIGHT); //get the height of frames of video
+		cout << "Resolution of video: " << dWidth << " x " << dHeight << endl;
+	}
+}
+
+void Vision::SetVideoFilenamePrefix(char* videoFilenamePrefix) {//sets the filename prefix to use for recording videos
+	if (!videoFilenamePrefix) {
+		return;
+	}
+	if (m_szVideoFilenamePrefix) {
+		delete []m_szVideoFilenamePrefix;
+		m_szVideoFilenamePrefix = NULL;
+	}
+	m_szVideoFilenamePrefix = new char[strlen(videoFilenamePrefix) + 1];
+	strcpy(m_szVideoFilenamePrefix, videoFilenamePrefix);
+}
+
+void Vision::StartVideoRecording(float fVideoDurationSec) {//start recording a video
+	CloseCamera();//make sure video camera is closed
+	//check to see if Raspivid software is running
+	if (Util::isProgramRunning("raspivid")) {
+		//need to kill raspivid program
+		system("kill raspivid");
+	}
+	m_fVideoDurationSec = fVideoDurationSec;
+	//use separate thread to launch raspivid program
+	int nError = pthread_create(&m_videoThreadId, NULL, &LaunchVideoFunction, (void*)this);
+	if (nError != 0) {
+		printf("Can't create video thread: %s", strerror(nError));
+	}
+}
+
+void Vision::AutoCaptureVideo() {//auto-record a video to file
+	char* szNextAutoVideoFilename = GetNextAutoVideoFilename();
+	if (!szNextAutoVideoFilename) {
+		return;
+	}
+	char* commandLineStr = strlen(szNextAutoVideoFilename + 128);
+	sprintf(commandLineStr, "raspivid -o %s -t %.0f", imageFilename, m_fVideoDurationSec);
+	if (m_bUpsideDown) {
+		sprintf(commandLineStr, "raspivid -vf -hf -o %s -t %.0f", imageFilename, m_fVideoDurationSec);
+	}
+	system(commandLineStr);
+	delete[]szNextAutoVideoFilename;
+	delete[]commandLineStr;
+}
+
+char* Vision::GetNextAutoVideoFilename() {//gets next available filename for automatically saving video data (calling function is responsible for deleting the returned character pointer)
+	const unsigned int MAX_FILE_NUMBER = 999999;
+	char* szRetval = new char[strlen(m_szFilenamePrefix) + strlen(m_szStorageFolder) + 16];
+	do {
+		m_uiVideoFileNumber++;
+		//check to see if folder name already has '/' character at the end of it 
+		if (m_szStorageFolder[strlen(m_szStorageFolder) - 1] == '/') {
+			sprintf(szRetval, "%s%s%05u.h264", m_szStorageFolder, m_szVideoFilenamePrefix, m_uiVideoFileNumber);
+		}
+		else {//insert '/' character between folder and filename
+			sprintf(szRetval, "%s/%s%05u.h264", m_szStorageFolder, m_szVideoFilenamePrefix, m_uiVideoFileNumber);
+		}
+		if (FileCommands::doesFileExist(szRetval)) {//file exists, increase # and try again
+			continue;
+		}
+		else return szRetval;
+	} while (m_uiVideoFileNumber < MAX_FILE_NUMBER);
+	return szRetval;
 }

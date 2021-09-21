@@ -62,6 +62,7 @@
 #define FC_WAIT 12 //command to wait for a specified amount of time, if that time is >= MIN_SLEEP_TIME_SEC then put AMOS into a low power state
 #define FC_SAMPLE 13 //command to collect sample data (from all sensors configured in prefs.txt file) and save data to specified filename
 #define FC_PHOTO 14 //command to take a high-resolution photograph
+#define FC_VIDEO 15 //command to start recording high-resolution video
 
 //structure used for indicating how many sensors the boat has and what types of sensors they are
 struct SENSOR_INFO {

@@ -22,7 +22,13 @@ public:
 	bool SendCapturedImage(int nHandle, bool bUseSerial, char *szCapFilename, void *pDiagSensor);//send saved image file over network connection or wireless serial port connection
 	void SetLoggingConfig(bool bLogPictures, int nIntervalSec, char *storage_folder, char *filename_prefix);//sets the configuration for continuously logging pictures from the camera
 	void AutoCapturePicture();//capture a picture and log it to file
+	void AutoCaptureVideo();//auto-record a video to file
 	void WaitForNextAutoCapture();//waits the required number of seconds before the next picture capture
+	void SetUpsideDown(bool bUpsideDown);//function used to handle the case where the camera is positioned upside-down (e.g. underneath AMOS)
+	void CloseCamera();//close video camera so that it can be accessed by other software
+	void OpenCamera();//open video camera port for use by this software
+	void SetVideoFilenamePrefix(char *videoFilenamePrefix);//sets the filename prefix to use for recording videos
+	void StartVideoRecording(float fVideoDurationSec);//start recording a video
 
 	//data
 	bool m_bPictureThreadRunning;//true when the thread for logging pictures is active
@@ -30,7 +36,13 @@ public:
 
 private:
 	//data
+	float m_fVideoDurationSec;//duration of next video in seconds
+	bool m_bVideoThreadRunning;//true if the video thread is running
+	pthread_t m_videoThreadId;//thread id for recording videos
+	char* m_szVideoFilenamePrefix;//the filename prefix to use for recording video, each filename will use this prefix, followed by a sequential number (ex: 00001, 00002, 00003, etc.)
+	bool m_bUpsideDown;//true if the camera is mounted upside down
 	unsigned int m_uiPictureFileNumber;//the number to append to the automatically saved picture filename (use 5 (or more) digits #####)
+	unsigned int m_uiVideoFileNumber;//the number to append to the automatically saved video filename (use 5 (or more) digits #####)
 	unsigned int m_uiLastAutoPictureTime;//the time of the last automatically saved picture in milliesconds
 	pthread_t m_cameraThreadId;//thread id for thread that continously takes pictures with the camera
 	cv::VideoCapture m_cap;//video capture object

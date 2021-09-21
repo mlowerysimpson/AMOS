@@ -889,6 +889,8 @@ bool GetDataLoggingPreferences() {//get data logging preferences from prefs.txt 
 	char *filename_prefix = NULL;
 	prefsFile.getString((char *)"[camera]",(char *)"filename_prefix",&filename_prefix);
 	g_vision.SetLoggingConfig(bUseCamera, nIntervalSeconds, storage_folder, filename_prefix);//sets the configuration for continuously logging pictures from the camera
+	int nUpsideDown = prefsFile.getInteger("[camera]", "upside_down");//should be > 0 if the camera is positioned upside down
+	g_vision.SetUpsideDown(nUpsideDown > 0);
 	if (storage_folder) {
 		delete []storage_folder;
 		storage_folder = NULL;
@@ -1156,9 +1158,9 @@ int main(int argc, const char * argv[]) {
 		return 3;
 	}		
 
-	//test
-	printf("Got data logging preferences.\n");
-	//end test
+	
+	g_shiplog.LogEntry((char*)"Got data logging preferences.\n",true);
+	
 	bool bContinuedFromPrevious = false;
 	if (argc>=3) {
 		char *commandFilename = (char *)argv[2];

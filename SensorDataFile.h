@@ -19,6 +19,7 @@
 #include "LeakSensor.h"
 #include "DiagnosticsSensor.h"
 #include "AtlasDO2Sensor.h"
+#include "AMLTempConductivity.h"
 #include <fcntl.h>
 #include <vector>
 
@@ -27,8 +28,8 @@ using namespace std;
 #define MAX_SENSORS 64 //maximum number of sensors that can be attached to the boat
 
 //define sensor types 
-#define WATER_TEMP_DATA 1 //water temperature 
-#define BOAT_INTERIOR_TEMP_DATA 2 //boat interior temperature
+#define WATER_TEMP_DATA 1 //water temperature (in deg C)
+#define BOAT_INTERIOR_TEMP_DATA 2 //boat interior temperature (in deg C)
 #define PH_DATA 3 //water pH value
 #define WATER_TURBIDITY 4 //turbidity value for water
 #define GPS_LATITUDE 5 //GPS latitude (in degrees)
@@ -36,6 +37,7 @@ using namespace std;
 #define LEAK_DATA 7//leak sensor (boolean indication of whether or not a leak has occurred)
 #define DIAGNOSTICS_DATA 8 //general diagnostics values (eg: current draw)
 #define DO2_DATA 9 //dissolved oxygen in water (mg/L)
+#define CONDUCTIVITY_DATA 10 //water conductivity (in mS / cm)
 
 #define SENSOR_GRID_PAUSETIME_SEC 5 //number of seconds to pause with thrusters off before collecting a sample when doing sensor grid data collection
 
@@ -53,6 +55,7 @@ public:
 	bool SendSensorData(int nSensorType, int nHandle, bool bUseSerial);//send sensor data over socket connection or wireless serial link
 	bool m_bFileOpened;//true if the file could be successfully opened for appending
 	void SetFilename(char * pszFilename);//change the name of the file used for saving data
+	char* GetFilename();
 	void CollectAndSaveDataNow();//collect and save data from all available sensors
 	void CollectData();//collect data from all available sensors
 	
@@ -62,6 +65,7 @@ private:
 	time_t m_nextLogTime;//time of next sample log in seconds since midnight, Jan. 01, 1970
 	int m_nLastLogTime;//time of last sample log in seconds since midnight
 	float m_fWaterTemp;//water temperature in degrees C
+	float m_fConductivity;//water conductivity in mS/cm
 	float m_fInteriorTemp;//the temperature of the interior of the boat in degrees C
 	float m_fWaterPH;//the measured pH value of the water
 	float m_fTurbidity;//the turbidity value of the water
@@ -89,6 +93,7 @@ private:
 	PHSensor *GetPHSensor();//returns the PH sensor (if available) or nullptr if not
 	TurbiditySensor *GetTurbiditySensor();//returns the turbidity sensor (if available) or nullptr if not
 	LeakSensor *GetLeakSensor();//returns the leak sensor (if available) or nullptr if not
+	AMLTempConductivity* GetTempConductivitySensor();//returns the temperature / conductivity sensor (if available) or nullptr if not
 
 	time_t GetNextLogTime(int nLoggingIntervalSec);//get the time of the next sample (in seconds since midnight, Jan, 1, 1970)
 	void WriteDataFileHeader();
