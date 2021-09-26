@@ -1,6 +1,7 @@
 //Vision.cpp - implementation file for Vision class
 #include "Vision.h"
 #include "CommandList.h"
+#include "ShipLog.h"
 #include "FileCommands.h"
 #include "Util.h"
 #include <sys/select.h>
@@ -16,6 +17,8 @@
 
 #define DEFAULT_VIDEO_TIME_SEC 300 //default recording time of video in seconds
 
+extern ShipLog g_shiplog;//used for logging data and to assist in debugging
+
 
 void *PictureLoggingThread(void *pParam) {//function continuously logging pictures to files
 	Vision *pVis = (Vision *)pParam;
@@ -30,7 +33,7 @@ void *PictureLoggingThread(void *pParam) {//function continuously logging pictur
 }
 
 void * LaunchVideoFunction(void* pParam) {//function launches a video 
-	Vision* PVision = (Vision*)pParam;
+	Vision* pVis = (Vision*)pParam;
 	pVis->m_bVideoThreadRunning = true;
 	pVis->AutoCaptureVideo();
 	printf("video thread finished\n");
@@ -50,7 +53,7 @@ Vision::Vision() {//constructor
 	m_bVideoThreadRunning = false;
 	m_bPictureThreadRunning=false;
 	m_bEndPictureLoggingThread=false;
-	m_videoThreadId = nullptr;
+	m_videoThreadId = 0;
 	m_cameraThreadId = 0;
 	m_uiLastAutoPictureTime = 0;
 	m_uiPictureFileNumber = 0;
@@ -391,10 +394,11 @@ void Vision::StartVideoRecording(float fVideoDurationSec) {//start recording a v
 	//check to see if Raspivid software is running
 	if (Util::isProgramRunning("raspivid")) {
 		//need to kill raspivid program
-		system("kill raspivid");
+		system("pkill raspivid");
 	}
 	m_fVideoDurationSec = fVideoDurationSec;
 	//use separate thread to launch raspivid program
+	g_shiplog.LogEntry("About to launch video thread", true);
 	int nError = pthread_create(&m_videoThreadId, NULL, &LaunchVideoFunction, (void*)this);
 	if (nError != 0) {
 		printf("Can't create video thread: %s", strerror(nError));
@@ -406,11 +410,12 @@ void Vision::AutoCaptureVideo() {//auto-record a video to file
 	if (!szNextAutoVideoFilename) {
 		return;
 	}
-	char* commandLineStr = strlen(szNextAutoVideoFilename + 128);
-	sprintf(commandLineStr, "raspivid -o %s -t %.0f", imageFilename, m_fVideoDurationSec);
+	char* commandLineStr = new char[strlen(szNextAutoVideoFilename) + 128];
+	sprintf(commandLineStr, "raspivid -o %s -t %.0f", szNextAutoVideoFilename, m_fVideoDurationSec*1000);
 	if (m_bUpsideDown) {
-		sprintf(commandLineStr, "raspivid -vf -hf -o %s -t %.0f", imageFilename, m_fVideoDurationSec);
+		sprintf(commandLineStr, "raspivid -vf -hf -o %s -t %.0f", szNextAutoVideoFilename, m_fVideoDurationSec*1000);
 	}
+	g_shiplog.LogEntry(commandLineStr, true);
 	system(commandLineStr);
 	delete[]szNextAutoVideoFilename;
 	delete[]commandLineStr;

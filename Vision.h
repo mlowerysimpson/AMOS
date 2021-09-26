@@ -31,13 +31,13 @@ public:
 	void StartVideoRecording(float fVideoDurationSec);//start recording a video
 
 	//data
+	bool m_bVideoThreadRunning;//true if the video thread is running
 	bool m_bPictureThreadRunning;//true when the thread for logging pictures is active
 	bool m_bEndPictureLoggingThread;//true when it is time to end the picture logging thread
 
 private:
 	//data
 	float m_fVideoDurationSec;//duration of next video in seconds
-	bool m_bVideoThreadRunning;//true if the video thread is running
 	pthread_t m_videoThreadId;//thread id for recording videos
 	char* m_szVideoFilenamePrefix;//the filename prefix to use for recording video, each filename will use this prefix, followed by a sequential number (ex: 00001, 00002, 00003, etc.)
 	bool m_bUpsideDown;//true if the camera is mounted upside down
@@ -53,6 +53,7 @@ private:
 	char *m_szFilenamePrefix;//the filename prefix to use for picture files, each filename will use this prefix, followed by a sequential number (ex: 00001, 00002, 00003, etc.)
 
 	//functions
+	char* GetNextAutoVideoFilename();//gets next available filename for automatically saving video data (calling function is responsible for deleting the returned character pointer)
 	char * GetNextAutoFilename();//gets next available filename for automatically saving image data (calling function is responsible for deleting the returned character pointer)
 	void StartPictureLoggingThread();//start thread for logging pictures
 	void EndPictureLoggingThread();//end thread for logging pictures

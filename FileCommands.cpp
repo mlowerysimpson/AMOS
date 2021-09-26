@@ -188,16 +188,38 @@ bool FileCommands::parseLine(std::string sLine) {//parse command from line of te
 			return false;//GPS waypoint is not formatted correctly(?)
 		}
 	}
+	
 	if (nVideoIndex >= 0) {
 		//start recording a video at the current location
 		char videoFilenamePrefix[256];
+		memset(videoFilenamePrefix, 0, 256);
 		double dDurationSec = 0.0;
-		if (sscanf(sLine.c_str(), "video: name = %s, duration_sec = %lf", videoFilenamePrefix, dDurationSec) != 2) {
+		//video settings line is of the form:
+		//video: name = ######, duration_sec = ###
+		bool bParsedPrefix = false;
+		int i = 0, j = 0;
+		for (i = 0; i < sLine.length(); i++) {
+			if (sLine[i] == '=') {
+				for (j = i + 2; sLine[j] != ','; j++) {
+					videoFilenamePrefix[j - i - 2] = sLine[j];
+				}
+				bParsedPrefix = true;
+				break;
+			}
+		}
+		if (!bParsedPrefix) {
+			g_shiplog.LogEntry("Error, unable to parse video file prefix", true);
+			return false;
+		}
+		std::string sRemainder = sLine.substr(j+2);
+		if (sscanf(sRemainder.c_str(), "duration_sec = %lf", &dDurationSec) != 1) {
 			//problem parsing line, not formatted correctly?
+			g_shiplog.LogEntry("Error, problem parsing video line, not formatted correctly?", true);
 			return false;
 		}
 		g_vision.SetVideoFilenamePrefix(videoFilenamePrefix);
 		AddCommand(FC_VIDEO, dDurationSec);
+		return true;
 	}
 	else if (nPhotoIndex>=0) {//take one or more photos at the current location
 		int nNumPhotos = 0;
@@ -461,6 +483,11 @@ void FileCommands::AddCommand(int nCommandType, double dVal) {
 		pRC->pDataBytes = new unsigned char[pRC->nNumDataBytes];
 		float fDurationSec = (float)dVal;
 		memcpy(pRC->pDataBytes, &fDurationSec, pRC->nNumDataBytes);
+		//test
+		char testMsg[256];
+		sprintf(testMsg, "Video Duration = %.1f sec", fDurationSec);
+		g_shiplog.LogEntry(testMsg, true);
+		//end test
 		m_commandList.push_back(pRC);
 	}
 }
