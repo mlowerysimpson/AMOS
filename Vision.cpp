@@ -66,7 +66,7 @@ Vision::~Vision() {//destructor
 	if (m_bVideoThreadRunning) {
 		if (Util::isProgramRunning("raspivid")) {
 			//need to kill raspivid program
-			system("kill raspivid");
+			system("pkill raspivid");
 		}
 	}
 	if (m_szStorageFolder) {

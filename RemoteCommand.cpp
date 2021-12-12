@@ -274,7 +274,7 @@ bool RemoteCommand::ExecuteCommand(REMOTE_COMMAND* pCommand, bool bUseSerial) {/
 		ExitMoveThreads();
 		//command to turn one or both thrusters on 
 		PROPELLER_STATE* pPropState = (PROPELLER_STATE*)pCommand->pDataBytes;
-		m_thrusters->SetAirPropSpeedAndRudderAngle(pPropState->fPropSpeed, pPropState->fRudderAngle);
+		m_thrusters->SetPropSpeedAndRudderAngle(pPropState->fPropSpeed, pPropState->fRudderAngle);
 	}
 	else if (pCommand->nCommand == GPS_DATA_PACKET) {
 		//test

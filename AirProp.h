@@ -1,6 +1,6 @@
 #include <wiringPi.h>
 
-#define MIN_AIRPROP_SPEED 0.0 //minimum propeller speed (i.e. stopped)
+#define MIN_AIRPROP_SPEED 0.0 //minimum air propeller speed (i.e. stopped)
 #define MAX_RECOMMENDED_AIRPROP_SPEED 9//a speed typically a bit lower than the maximum that is more suitable for conserving power when sunlight is in limited supply
 #define MAX_AIRPROP_SPEED 10.0 //arbitrary units
 #define STOP_AIR_PULSE_TIME 1000 //pulse time required for sending a "stop" signal to the air propeller

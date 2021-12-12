@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include "Thruster.h"
+#include "filedata.h"
 #include <math.h>
 #include <algorithm>
 
@@ -10,10 +11,11 @@
  * @param bRightThruster set to true if a water propeller on the right side of the boat is available, otherwise set to false
  * @param bAirThruster set to true if an air propeller is present (i.e. this is an airboat)
  */
-Thruster::Thruster(bool bLeftThruster, bool bRightThruster, bool bAirThruster) {//thruster constructor
+Thruster::Thruster(bool bLeftThruster, bool bRightThruster, bool bAirThruster, bool bSingleWaterThruster) {//thruster constructor
 	m_bLeftThruster = bLeftThruster;
 	m_bRightThruster = bRightThruster;
 	m_bSafetyMode = false;
+	m_bSingleWaterThruster = bSingleWaterThruster;
 	m_fLSpeed=0;
 	m_fRSpeed=0;
 	m_airProp=nullptr;
@@ -21,6 +23,42 @@ Thruster::Thruster(bool bLeftThruster, bool bRightThruster, bool bAirThruster) {
 	if (bAirThruster) {
 		m_airProp = new AirProp();
 		m_rudder = new Rudder();
+	}
+}
+
+/**
+ * @brief Thruster constructor with the path to a preferences file as the single parameter
+ *
+ * @param szPrefsFilename the path to the preferences file containing all of the program settings, including what type of thruster is being used
+ */
+Thruster::Thruster(char* szPrefsFilename) {
+	//default values
+	bool bAirThruster = true;
+	m_bLeftThruster = false;
+	m_bRightThruster = false;
+	m_bSafetyMode = false;
+	m_bSingleWaterThruster = false;
+	m_fLSpeed = 0;
+	m_fRSpeed = 0;
+	m_airProp = nullptr;
+	m_rudder = nullptr;
+	if (szPrefsFilename != nullptr) {
+		filedata prefsFile(szPrefsFilename);
+		int nDualThrusters = prefsFile.getInteger("[thrusters]", "dual_thrusters");
+		if (nDualThrusters > 0) {
+			m_bLeftThruster = true;
+			m_bRightThruster = true;
+		}
+		else {
+			int nSingleWaterThruster = prefsFile.getInteger("[thrusters]", "single_water_thruster");
+			if (nSingleWaterThruster > 0) {
+				m_bSingleWaterThruster = true;
+			}
+			else {//assume air thrusterif (bAirThruster) {
+				m_airProp = new AirProp();
+			}
+			m_rudder = new Rudder();
+		}
 	}
 }
 
@@ -66,9 +104,23 @@ void Thruster::SetSpeed(float fSpeed) {
 		Stop();
 		return;
 	}
-#ifdef REVERSE_THRUST
-	fSpeed=-fSpeed;//wired backwards
-#endif
+	else if (m_bSingleWaterThruster) {
+		m_fLSpeed = fSpeed;
+		m_fRSpeed = fSpeed;
+		m_rudder->SetAngle(fSpeed, 0);
+		int nDelayVal = STOP_PULSE_TIME;
+		if (fSpeed > 0) {
+			nDelayVal += DEAD_BAND;
+			nDelayVal += (int)((MAX_PULSE_TIME - STOP_PULSE_TIME - DEAD_BAND) * fSpeed / MAX_THRUSTER_SPEED);
+		}
+		else {
+			nDelayVal -= DEAD_BAND;
+			nDelayVal -= (int)((STOP_PULSE_TIME - MIN_PULSE_TIME + DEAD_BAND) * fSpeed / MIN_THRUSTER_SPEED);
+		}
+		int nPWMData = (int)(nDelayVal / TIME_INCREMENT_US);
+		pwmWrite(SINGLE_THRUSTER_PIN, nPWMData);
+		return;
+	}
 	if (fSpeed>MAX_THRUSTER_SPEED) {//invalid speed
 		Stop();
 		return;
@@ -126,6 +178,19 @@ void Thruster::SetLeftRightSpeed(float fLeftSpeed, float fRightSpeed) {//set spe
 		m_rudder->SetAngle(fMaxSpeed, fRudderAngle);
 		return;
 	}
+	else if (m_bSingleWaterThruster) {//single water thruster with rudder
+		float fSpeedDif = fLeftSpeed - fRightSpeed;
+		float fRudderAngle = 0;
+		float fMaxSpeed = std::max(abs(fLeftSpeed), abs(fRightSpeed));
+		if (fMaxSpeed > 0) {
+			fRudderAngle = MAX_WATER_RUDDER_ANGLE * fSpeedDif / MAX_THRUSTER_SPEED;
+		}
+		if (fRudderAngle > MAX_WATER_RUDDER_ANGLE) fRudderAngle = MAX_WATER_RUDDER_ANGLE;
+		else if (fRudderAngle < MIN_WATER_RUDDER_ANGLE) fRudderAngle = MIN_WATER_RUDDER_ANGLE;
+		this->SetSpeed(fMaxSpeed);
+		m_rudder->SetAngle(fMaxSpeed, fRudderAngle);
+		return;
+	}
 	SetLeftSpeed(fLeftSpeed);
 	SetRightSpeed(fRightSpeed);	
 }
@@ -141,9 +206,7 @@ void Thruster::SetLeftSpeed(float fSpeed) {
 		return;	
 	}
 	m_fLSpeed = fSpeed;
-#ifdef REVERSE_THRUST
-	fSpeed=-fSpeed;//wired backwards
-#endif
+
 	if (!m_bLeftThruster) return;
 	if (fSpeed>MAX_THRUSTER_SPEED) {//invalid speed
 		Stop();	
@@ -176,9 +239,7 @@ void Thruster::SetRightSpeed(float fSpeed) {//set speed of right thruster (fSpee
 		return;
 	}
 	m_fRSpeed = fSpeed;
-#ifdef REVERSE_THRUST
-	fSpeed=-fSpeed;//wired backwards
-#endif
+
 	if (!m_bRightThruster) {
 		Stop();	
 		return;
@@ -220,6 +281,10 @@ void Thruster::Stop() {
 		return;
 	}
 	int nPWMData = (int)(STOP_PULSE_TIME / TIME_INCREMENT_US);
+	if (m_bSingleWaterThruster) {
+		pwmWrite(SINGLE_THRUSTER_PIN, nPWMData);
+		return;
+	}
 	if (m_bLeftThruster) {
 		pwmWrite(LEFT_THRUST_PIN,nPWMData);
 	}
@@ -260,8 +325,13 @@ void Thruster::StopRight() {//stop the right thruster
  */
 void Thruster::OneTimeSetup() {//setup procedure to be performed once per power-cycle of the T200 thrusters
 	wiringPiSetupGpio();//need to call this before doing anything with GPIO
-	pinMode(LEFT_THRUST_PIN,PWM_OUTPUT);
-	pinMode(RIGHT_THRUST_PIN,PWM_OUTPUT);
+	if (m_bSingleWaterThruster) {
+		pinMode(SINGLE_THRUSTER_PIN, PWM_OUTPUT);
+	}
+	else if (m_bLeftThruster && m_bRightThruster) {
+		pinMode(LEFT_THRUST_PIN, PWM_OUTPUT);
+		pinMode(RIGHT_THRUST_PIN, PWM_OUTPUT);
+	}
 	pwmSetClock(PWM_CLK_DIV);//set PWM clock divisor
 	pwmSetMode(PWM_MODE_MS);//set to "mark space" mode	
 }
@@ -278,8 +348,13 @@ void Thruster::SetObstacleSafetyMode(bool bSafetyMode) {
 		return;
 	}
 	if (m_bSafetyMode) {
-		StopLeft();
-		StopRight();
+		if (m_bSingleWaterThruster) {
+			Stop();
+		}
+		else {
+			StopLeft();
+			StopRight();
+		}
 	}
 }
 
@@ -339,11 +414,11 @@ float Thruster::GetAirSpeed() {//get the speed of the air propeller (if availabl
 
 
 /**
- * @brief get the angle of the air rudder (if available) in degrees
+ * @brief get the angle of the rudder (if available) in degrees
  * 
- * @return float the angle of the air rudder in degrees
+ * @return float the angle of the rudder in degrees
  */
-float Thruster::GetAirRudderAngle() {//get the angle of the air rudder (if available) in degrees
+float Thruster::GetRudderAngle() {//get the angle of the rudder (if available) in degrees
 	if (m_rudder==nullptr) {
 		return 0;
 	}
@@ -352,14 +427,29 @@ float Thruster::GetAirRudderAngle() {//get the angle of the air rudder (if avail
 }
 
 /**
- * @brief set speed of air propeller and the angle of the air rudder
+ * @brief set speed of propeller (air or single water) and the angle of the rudder
  * 
- * @param fAirSpeed the speed to assign to the air propeller (arbitrary units, should be between 0 and MAX_RECOMMENDED_AIRPROP_SPEED)
- * @param fAirRudderAngle the angle (in degrees) to assign to the air rudder. fAirRudderAngle should be between MIN_RUDDER_ANGLE and MAX_RUDDER_ANGLE. Positive angles result in a clockwise turning moment to the boat.
+ * @param fSpeed the speed to assign to the propeller (arbitrary units, should be between 0 and MAX_RECOMMENDED_AIRPROP_SPEED for an air propeller or MAX_THRUSTER_SPEED for a single water propeller)
+ * @param fRudderAngle the angle (in degrees) to assign to the rudder. fRudderAngle should be between MIN_RUDDER_ANGLE and MAX_RUDDER_ANGLE. Positive angles result in a clockwise turning moment to the boat.
  */
-void Thruster::SetAirPropSpeedAndRudderAngle(float fAirSpeed, float fAirRudderAngle) {//set speed of air propeller and the angle of the air rudder
-	if (m_airProp==nullptr) return;
+void Thruster::SetPropSpeedAndRudderAngle(float fSpeed, float fRudderAngle) {//set speed of propeller and the angle of the rudder
 	if (m_rudder==nullptr) return;
-	m_airProp->SetSpeed(fAirSpeed);
-	m_rudder->SetAngle(fAirSpeed, fAirRudderAngle);
+	if (m_airProp != nullptr) {
+		m_airProp->SetSpeed(fSpeed);
+	}
+	else {
+		this->SetSpeed(fSpeed);
+	}
+	m_rudder->SetAngle(fSpeed, fRudderAngle);
+}
+
+bool Thruster::isBoatWithRudder() {//return true if boat is using a rudder
+	return (m_rudder != nullptr);
+}
+
+float Thruster::GetSpeed() {//get the speed of the propeller (air or single propeller)
+	if (m_airProp) {
+		return m_airProp->GetSpeed();
+	}
+	return std::max(m_fLSpeed, m_fRSpeed);
 }

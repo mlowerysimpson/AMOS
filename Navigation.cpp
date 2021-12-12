@@ -352,10 +352,9 @@ double Navigation::ComputeHeadingDif(double dHeading1Deg,double dHeading2Deg) {/
 	unsigned int uiFunctionStartTime = millis();
 	unsigned int uiTimeoutTime = uiFunctionStartTime + TIMEOUT_TIME_SEC*1000;
 	Thruster *pThrust = (Thruster *)pThrusters;
-	bool bAirBoat = false;
+	bool bBoatWithRudder = pThrust->isBoatWithRudder();
 	if (pThrust->isAirBoat()) {
 		MAX_TURN_SPEED = MAX_RECOMMENDED_AIRPROP_SPEED;
-		bAirBoat = true;
 	}
 	MAX_TURN_SPEED = min(MAX_TURN_SPEED,(float)this->m_dMaxSpeed);
 	if (MAX_TURN_SPEED<=0) {
@@ -417,7 +416,7 @@ double Navigation::ComputeHeadingDif(double dHeading1Deg,double dHeading2Deg) {/
 				fSpeedLeft = dEstimatedTimeLeft / 50 * MAX_TURN_SPEED;
 				if (fSpeedLeft>MAX_TURN_SPEED) fSpeedLeft = MAX_TURN_SPEED;
 				fSpeedRight = -fSpeedLeft;
-				if (bAirBoat&&fSpeedRight<0) {
+				if (bBoatWithRudder && fSpeedRight<0) {
 					fSpeedRight = 0;
 				}
 			}
@@ -425,7 +424,7 @@ double Navigation::ComputeHeadingDif(double dHeading1Deg,double dHeading2Deg) {/
 				fSpeedRight = (dEstimatedTimeLeft - 5) / 50 * MAX_TURN_SPEED;
 				if (fSpeedRight>MAX_TURN_SPEED) fSpeedRight = MAX_TURN_SPEED;
 				fSpeedLeft = -fSpeedRight;
-				if (bAirBoat&&fSpeedLeft<0) {
+				if (bBoatWithRudder && fSpeedLeft<0) {
 					fSpeedLeft = 0;
 				}
 			}
@@ -583,8 +582,8 @@ void Navigation::IncrementTurningSpeed(float &fSpeedLeft,float &fSpeedRight,floa
 		//lower power mode, don't do anything
 		return;
 	}
-	if (pThrust->isAirBoat()) {
-		DriverAirboatForwardForTime(nTotalTimeSeconds,fMaxSpeed,fHeadingDirection,pThrusters,command_mutex,
+	if (pThrust->isBoatWithRudder()) {
+		DriveBoatWithRudderForwardForTime(nTotalTimeSeconds,fMaxSpeed,fHeadingDirection,pThrusters,command_mutex,
 			lastNetworkCommandTimeMS, pShipLog, bCancel, bStopWhenDone, nPriority);
 		return;
 	}
@@ -772,8 +771,8 @@ char *Navigation::GetStatusLogText() {
 	
 	float fLSpeed=max(pThrust->GetLSpeed(),(float)2);//get the current speed of the left propeller 
 	float fRSpeed=max(pThrust->GetRSpeed(),(float)2);//get the current speed of the right propeller
-	float fAirSpeed = max(pThrust->GetAirSpeed(),(float)2);//get speed of air propeller (if used)
-	float fAirRudderAngle = 0;//the angle of the air rudder (if used)
+	float fSpeed = max(pThrust->GetSpeed(),(float)2);//get speed of air or single water propeller (if used)
+	float fRudderAngle = 0;//the angle of the rudder (if used)
 	while (dDistToDest>CLOSE_ENOUGH_M&&!*bCancel&&!m_bExitNavFunction) {
 		if (bUseTimeout) {//check for timeout
 			if (millis() > uiTimeoutTime) {
@@ -786,10 +785,10 @@ char *Navigation::GetStatusLogText() {
 				m_dMaxSpeed = MAX_THRUSTER_SPEED/2;
 			}
 		}*/
-		if (pThrust->isAirBoat()) {
-			fAirSpeed+=.1;
-			if (fAirSpeed>dMaxSpeed) {
-				fAirSpeed = dMaxSpeed;
+		if (pThrust->isBoatWithRudder()) {
+			fSpeed+=.1;
+			if (fSpeed>dMaxSpeed) {
+				fSpeed = dMaxSpeed;
 			}
 		}
 		else {
@@ -807,11 +806,15 @@ char *Navigation::GetStatusLogText() {
 		unsigned int uiTimeNow = millis();
 		AddNavSample(uiTimeNow);//add current navigation data to the buffer of samples
 		if (isBoatStuck()&&dMaxSpeed>0) {
-			if (pThrust->isAirBoat()) {
+			if (pThrust->isBoatWithRudder()) {
 				float fRandomAngle = TurnToRandomAngle(pThrusters, command_mutex, lastNetworkCommandTimeMS, pShipLog, bCancel, nPriority);
 				sprintf(sMsg,"Boat is stuck, turning to random angle of %.1f deg.\n",fRandomAngle);
 				pLog->LogEntry(sMsg,true);
-				this->DriveForwardForTime(10,MAX_RECOMMENDED_AIRPROP_SPEED, fRandomAngle, pThrusters, command_mutex, lastNetworkCommandTimeMS, pShipLog, bCancel, true, nPriority);
+				double dSpeed = dMaxSpeed;
+				if (pThrust->isAirBoat()) {
+					dSpeed = MAX_RECOMMENDED_AIRPROP_SPEED;
+				}
+				this->DriveForwardForTime(10, dSpeed, fRandomAngle, pThrusters, command_mutex, lastNetworkCommandTimeMS, pShipLog, bCancel, true, nPriority);
 			}
 			else {
 				CheckPriority(nPriority);
@@ -840,12 +843,12 @@ char *Navigation::GetStatusLogText() {
 			TurnToCompassHeading(fDesiredCompassHeading, pThrusters, command_mutex, lastNetworkCommandTimeMS, pShipLog, bCancel,nPriority);//turn boat to desired heading to correct GPS track
 			fLSpeed=2;
 			fRSpeed=2;
-			fAirSpeed=2;
+			fSpeed=2;
 		}
 		else {//heading is close enough so that just a minor trimming of direction can be used
 			CheckPriority(nPriority);
-			if (pThrust->isAirBoat()) {//air boat
-				TrimAirRudder(fAirRudderAngle,fHeadingError,(float)dDesiredHeading,pShipLog);	
+			if (pThrust->isBoatWithRudder()) {
+				TrimRudder(fRudderAngle,fHeadingError,(float)dDesiredHeading,pShipLog);	
 			}
 			else {
 				TrimSpeeds(fLSpeed,fRSpeed,fHeadingError,(float)dDesiredHeading,pShipLog);
@@ -856,8 +859,8 @@ char *Navigation::GetStatusLogText() {
 		}
 		CheckPriority(nPriority);
 		pthread_mutex_lock(command_mutex);
-		if (pThrust->isAirBoat()) {
-			pThrust->SetAirPropSpeedAndRudderAngle(fAirSpeed,fAirRudderAngle);
+		if (pThrust->isBoatWithRudder()) {
+			pThrust->SetPropSpeedAndRudderAngle(fSpeed,fRudderAngle);
 		}
 		else {
 			pThrust->SetLeftRightSpeed(fLSpeed,fRSpeed);
@@ -1481,11 +1484,11 @@ double Navigation::GetLongitude() {
 }
 
 /**
- * @brief drive airboat forward for the specified time in seconds
+ * @brief drive boat with a rudder forward for the specified time in seconds
  * 
  * @param nTotalTimeSeconds the total length of time in seconds that the boat will be driven forward.
  * @param fMaxSpeed the desired maximum speed for the thrusters.
- * @param fHeadingDirection the target direction in which we are to move forward (corresponds to pointing direction of boat, actual track covered by vary depending on wind and current).
+ * @param fHeadingDirection the target direction in which we are to move forward (corresponds to pointing direction of boat, actual track covered will vary depending on wind and current).
  * @param pThrusters void pointer to previously created Thruster object for driving the propeller(s).
  * @param command_mutex mutex controlling access to propellers.
  * @param lastNetworkCommandTimeMS time in milliseconds since program started that the last network command was issued.
@@ -1494,7 +1497,7 @@ double Navigation::GetLongitude() {
  * @param bStopWhenDone true if the thrusters should be stopped after driving has completed (i.e. after nTotalTimeSeconds has elapsed).
  * @param nPriority the priority level of the calling thread that requested this command.
  */
-void Navigation::DriverAirboatForwardForTime(int nTotalTimeSeconds, float fMaxSpeed, float fHeadingDirection, void *pThrusters, pthread_mutex_t *command_mutex, 
+void Navigation::DriveBoatWithRudderForwardForTime(int nTotalTimeSeconds, float fMaxSpeed, float fHeadingDirection, void *pThrusters, pthread_mutex_t *command_mutex, 
 									 unsigned int *lastNetworkCommandTimeMS, void *pShipLog, bool *bCancel, bool bStopWhenDone, int nPriority) {
 	const float MAX_ALLOWED_HEADING_ERROR = 30.0;
 	const unsigned int COMPASS_REORIENT_TIME = 60000;//minimum number of ms to go without doing a full magnetic compass check 
@@ -1518,9 +1521,8 @@ void Navigation::DriverAirboatForwardForTime(int nTotalTimeSeconds, float fMaxSp
 	if (command_mutex!=nullptr) {
 		pthread_mutex_lock(command_mutex);
 	}
-	//pThrust->SetSpeed(fSpeed);
-	float fAirSpeed = pThrust->GetAirSpeed();
-	float fAirRudderAngle = pThrust->GetAirRudderAngle();//the angle of the air rudder (if used)
+	float fSpeed = pThrust->GetSpeed();
+	float fRudderAngle = pThrust->GetRudderAngle();//the angle of the air rudder (if used)
 	if (command_mutex!=nullptr) {
 		pthread_mutex_unlock(command_mutex);
 	}
@@ -1529,23 +1531,22 @@ void Navigation::DriverAirboatForwardForTime(int nTotalTimeSeconds, float fMaxSp
 		usleep(100000);//pause thread for 0.1 seconds
 		dMilliSecondsRemaining = ((double)ui_endTime) - ((double)millis());
 		if (dMilliSecondsRemaining>0) {
-			fAirSpeed+=0.1;
-			if (fAirSpeed>fMaxSpeed) {//check maximum speed specified in function call
-				fAirSpeed=fMaxSpeed;
+			fSpeed+=0.1;
+			if (fSpeed>fMaxSpeed) {//check maximum speed specified in function call
+				fSpeed=fMaxSpeed;
 			}
 			float fObstacleOffset=this->GetObstacleAvoidanceHeadingOffset(fHeadingDirection);//add on angular offset for avoiding obstacles (if any)
 			float fHeadingError = m_imuData.heading - (fHeadingDirection+fObstacleOffset);
-
 
 			unsigned int uiTimeNow = millis();
 			if (fabs(fHeadingError)>MAX_ALLOWED_HEADING_ERROR&&((uiTimeNow - m_uiLastCompassCheckTime)>COMPASS_REORIENT_TIME)) {
 				float fDesiredCompassHeading = m_imuData.heading - fHeadingError;//note desired compass heading for the boat can in general differ from the desired GPS track due to wind and water currents
 				TurnToCompassHeading(fDesiredCompassHeading, pThrusters, command_mutex, lastNetworkCommandTimeMS, pShipLog, bCancel,nPriority);//turn boat to desired heading to correct GPS track
-				fAirSpeed=2;
+				fSpeed=2;
 			}
 			else {//heading is close enough so that just a minor trimming of direction can be used
 				CheckPriority(nPriority);
-				TrimAirRudder(fAirRudderAngle,fHeadingError,fHeadingDirection+fObstacleOffset,pShipLog);	
+				TrimRudder(fRudderAngle,fHeadingError,fHeadingDirection+fObstacleOffset,pShipLog);	
 			}
 			if (lastNetworkCommandTimeMS!=nullptr) {
 				while ((millis() - *lastNetworkCommandTimeMS)<10000&&!*bCancel) {
@@ -1556,7 +1557,7 @@ void Navigation::DriverAirboatForwardForTime(int nTotalTimeSeconds, float fMaxSp
 			if (command_mutex!=nullptr) {
 				pthread_mutex_lock(command_mutex);
 			}
-			pThrust->SetAirPropSpeedAndRudderAngle(fAirSpeed,fAirRudderAngle);
+			pThrust->SetPropSpeedAndRudderAngle(fSpeed,fRudderAngle);
 		
 			if (command_mutex!=nullptr) {
 				pthread_mutex_unlock(command_mutex);
@@ -1590,7 +1591,7 @@ float Navigation::TurnToRandomAngle(void *pThrusters, pthread_mutex_t *command_m
 	this->TurnToCompassHeading(fRandomAngle,pThrusters, command_mutex, lastNetworkCommandTimeMS, pShipLog, bCancel, nPriority);
 }
 
-void Navigation::TrimAirRudder(float &fAirRudderAngle,float fHeadingError,float fDesiredHeading,void *pShipLog) {//fine-tune air rudder angle in order to correct any heading error
+void Navigation::TrimRudder(float &fRudderAngle,float fHeadingError,float fDesiredHeading,void *pShipLog) {//fine-tune rudder angle in order to correct any heading error
 	//make sure we don't have more than 180 degrees of heading error
 	const float YAW_FACTOR = 5;//relative factor that takes into consideration the importance of the estimated yaw rate in determining thruster power
 	const float MAX_TRIM = 2;//maximum amount to trim thruster (in degrees) in each iteration of this function
@@ -1626,12 +1627,12 @@ void Navigation::TrimAirRudder(float &fAirRudderAngle,float fHeadingError,float 
 			fTrimAmount=MAX_TRIM;
 		}
 	}
-	fAirRudderAngle+=fTrimAmount;
-	if (fAirRudderAngle<-MAX_TRIM_RUDDER_ANGLE) {
-		fAirRudderAngle = -MAX_TRIM_RUDDER_ANGLE;
+	fRudderAngle+=fTrimAmount;
+	if (fRudderAngle<-MAX_TRIM_RUDDER_ANGLE) {
+		fRudderAngle = -MAX_TRIM_RUDDER_ANGLE;
 	}
-	else if (fAirRudderAngle>MAX_TRIM_RUDDER_ANGLE) {
-		fAirRudderAngle = MAX_TRIM_RUDDER_ANGLE;
+	else if (fRudderAngle>MAX_TRIM_RUDDER_ANGLE) {
+		fRudderAngle = MAX_TRIM_RUDDER_ANGLE;
 	}
 	//test
 	//printf("fHeadingError = %.1f, fAirRudderAngle = %.1f\n",fHeadingError,fAirRudderAngle);

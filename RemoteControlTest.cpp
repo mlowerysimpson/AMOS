@@ -1105,7 +1105,8 @@ int main(int argc, const char * argv[]) {
 	pthread_mutexattr_settype(&g_remoteCommandsMutexAttr, PTHREAD_MUTEX_RECURSIVE);
 	pthread_mutex_init(&g_remoteCommandsMutex, &g_remoteCommandsMutexAttr);
 	g_i2cMutex = PTHREAD_MUTEX_INITIALIZER;
-	Thruster::OneTimeSetup();//do I/O setup for thrusters (once per power-cycle), this function calls the WiringPi setup function
+	g_thrusters = new Thruster((char*)"prefs.txt");
+	g_thrusters->OneTimeSetup();//do I/O setup for thrusters (once per power-cycle), this function calls the WiringPi setup function
 
 	
 	pinMode(ACTIVITY_PIN,OUTPUT);//setup activity pin as output
@@ -1114,8 +1115,8 @@ int main(int argc, const char * argv[]) {
 		g_shipdiagnostics->ActivityPulse();//send activity pulse out on activity pin to indicate that program is running
 	}
 	
-	//g_thrusters = new Thruster(true,true,false);//Thruster constructor for left & right propellers in water
-	g_thrusters = new Thruster(false,false,true);//Thruster constructor for air propeller & rudder
+	
+
 	g_thrusters->Initialize();//more initialization for thrusters (makes sure they begin "stopped")
 
 	

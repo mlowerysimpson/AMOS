@@ -144,10 +144,10 @@ private:
 	void UpdatePlannedHeading(double dLatitude,double dLongitude);//update the planned heading if the specified location is amongst the planned waypoints
 	float GetObstacleAvoidanceHeadingOffset(float fDesiredHeading);//get the neccessary heading offset for avoiding obstacles (if any)
 	void CheckPriority(int nPriority);//check to see if there are no other higher priority threads trying to execute a navigation command at the same time
-	void TrimAirRudder(float &fAirRudderAngle,float fHeadingError,float fDesiredHeading,void *pShipLog);//fine-tune air rudder angle in order to correct any heading error
+	void TrimRudder(float &fRudderAngle,float fHeadingError,float fDesiredHeading,void *pShipLog);//fine-tune rudder angle in order to correct any heading error
 	float TurnToRandomAngle(void *pThrusters, pthread_mutex_t *command_mutex, unsigned int *lastNetworkCommandTimeMS, void *pShipLog, bool *bCancel, int nPriority);//turns boat to a random angle
 	static double ComputeAvgHeading(double dHeading1Deg, double dHeading2Deg);//return average value of 2 headings in degrees
-	void DriverAirboatForwardForTime(int nTotalTimeSeconds, float fMaxSpeed, float fHeadingDirection, void *pThrusters, pthread_mutex_t *command_mutex, 
+	void DriveBoatWithRudderForwardForTime(int nTotalTimeSeconds, float fMaxSpeed, float fHeadingDirection, void *pThrusters, pthread_mutex_t *command_mutex, 
 									 unsigned int *lastNetworkCommandTimeMS, void *pShipLog, bool *bCancel, bool bStopWhenDone, int nPriority);
 	double CalculateIntegratedHeadingError(double dTargetHeading, void *pShipLog);//get integral of heading error over the last COMPASS_BUFSIZE samples (~ 2 seconds)
 	float FindEstimatedCompassError(void *pShipLog);//look at compass and GPS data for the last SAMPLE_BUFSIZE samples to estimate the amount of compass error; provides an estimate of how far off the compass is from the GPS track
