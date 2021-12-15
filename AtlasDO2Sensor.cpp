@@ -31,7 +31,6 @@ AtlasDO2Sensor::AtlasDO2Sensor(pthread_mutex_t *i2c_mutex) : Sensor(nullptr) {//
     //open I2C port for AtlasDO2Sensor device
 	char *i2c_filename = (char*)"/dev/i2c-1";
 	m_bOpenedI2C_OK = true;
-    m_bDO2Initialized_OK = true;
 	lockmutex();
 	m_file_i2c = open(i2c_filename, O_RDWR);
 	unlockmutex();

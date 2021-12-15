@@ -5,6 +5,12 @@
 
 #define RECENT_THRESHOLD_SEC 10
 
+//I2C response codes for Atlas Scientific probes in I2C mode
+#define NO_DATA_TO_SEND 255
+#define NOT_READY 254
+#define SYNTAX_ERROR 2
+#define DATA_OK 1
+
 /**
  * @brief sensor class (base class for all types of sensors)
  * 

@@ -8,12 +8,6 @@ typedef int pthread_mutex_t;
 #endif
 #include "Sensor.h"
 
-//I2C response codes for EZO-DO
-#define NO_DATA_TO_SEND 255
-#define NOT_READY 254
-#define SYNTAX_ERROR 2
-#define DATA_OK 1
-
 
 class AtlasDO2Sensor : public Sensor
 {
@@ -29,7 +23,6 @@ class AtlasDO2Sensor : public Sensor
   private:
       pthread_mutex_t *m_i2c_mutex;
       bool m_bOpenedI2C_OK;
-	  bool m_bDO2Initialized_OK;
       int m_file_i2c;//handle to I2C port for the LiDAR connection
       bool write_i2c(unsigned char *ucData, int nNumBytes);//writes bytes to I2C address
       void lockmutex();//lock mutex for access to the I2C bus
