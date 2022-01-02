@@ -371,9 +371,6 @@ void Vision::OpenCamera() {//open video camera port for use by this software
 	}
 	else {
 		m_bCameraOpened = true;
-		double dWidth = m_cap.get(CAP_PROP_FRAME_WIDTH); //get the width of frames of video
-		double dHeight = m_cap.get(CAP_PROP_FRAME_HEIGHT); //get the height of frames of video
-		cout << "Resolution of video: " << dWidth << " x " << dHeight << endl;
 	}
 }
 

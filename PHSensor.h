@@ -7,6 +7,7 @@ typedef int pthread_mutex_t;
 #endif
 #include "Sensor.h"
 
+#define DEFAULT_PH_TEMP 25.0 //default temperature for PH readings
 
 //default pH calibration and channel info
 #define DEFAULT_PH_LOWCALVOLTAGE 0.655 //default acidic calibration voltage (for pH of 2.4)
@@ -26,13 +27,17 @@ struct PH_CALIBRATION {//pH probe calibration data for analog pH sensor (connect
 class PHSensor : public Sensor {//class used for getting pH data for pH probe connected to A To D device
 public:
 	PHSensor(int nAToDChannel, AToD *pAToD, PH_CALIBRATION *pPHCal);//constructor for analog pH sensor connected to A to D board
-	PHSensor(unsigned char i2c_channel, pthread_mutex_t* i2c_mutex);//constructor for Atlas scientific pH sensor on I2C
+	PHSensor(pthread_mutex_t* i2c_mutex);//constructor for Atlas scientific pH sensor on I2C
 	~PHSensor();//destructor
 	bool GetPHSensorPH(double &dPHVal);//gets the pH probe pH value for AMOS (uses currently available pH probe calibration parameters)
 	bool GetPHSensorPH(double& dPHVal, double dWaterTempDegC);//gets the pH probe pH value for AMOS, with temperature compensation applied (I2C probe only)
 	bool CalibrateMidpoint(double dMidPHVal, double dWaterTempDegC);//perform a single-point, midpoint calibration of the pH probe (I2C devices only, removes all previous calibrations)
 	bool CalibrateLowpoint(double dLowPHVal, double dWaterTempDegC);//perform the lowpoint calibration of the pH probe (I2C devices only)
 	bool CalibrateHighpoint(double dHighPHVal, double dWaterTempDegC);//perform the highpoint calibration of the pH probe (I2C devices only)
+	void RestoreFactoryCal();//restores the factory calibration, reboots the probe
+	void EnterSleepMode();//go into sleep mode to conserve a bit of power
+	void ExitSleepMode();//come out of sleep mode for making measurements
+	bool ProtocolLock(int nLock);//lock or unlock i2c communications for the device
 
 private:
 	//data
@@ -44,8 +49,10 @@ private:
 	pthread_mutex_t* m_i2c_mutex;
 	bool m_bOpenedI2C_OK;
 	bool GetI2CPH(double& dPHMeasurement);//gets the pH measurement from an I2C probe
+	bool GetI2CPH(double& dPHMeasurement, double dTempDegC);
 	int m_file_i2c;//handle to I2C port for the LiDAR connection
 	bool write_i2c(unsigned char* ucData, int nNumBytes);//writes bytes to I2C address
 	void lockmutex();//lock mutex for access to the I2C bus
 	void unlockmutex();//unlock mutex for access to the I2C bus
+	bool Check2ByteResponse();
 };

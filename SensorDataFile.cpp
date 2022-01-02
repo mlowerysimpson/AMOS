@@ -349,8 +349,15 @@ bool SensorDataFile::SendSensorData(int nSensorType, int nHandle, bool bUseSeria
 		PHSensor *pPHSensor = GetPHSensor();
 		if (pPHSensor&&pPHSensor->isOldData()) {
 			double dPHVal=0.0;
-			if (pPHSensor->GetPHSensorPH(dPHVal)) {
-				m_fWaterPH = (float)dPHVal;
+			if (m_fWaterTemp != 0) {//use water temperature to get temperature corrected pH value
+				if (pPHSensor->GetPHSensorPH(dPHVal, (double)m_fWaterTemp)) {
+					m_fWaterPH = (float)dPHVal;
+				}
+			}
+			else {//water temperature is not available, just get uncorrected pH
+				if (pPHSensor->GetPHSensorPH(dPHVal)) {
+					m_fWaterPH = (float)dPHVal;
+				}
 			}
 		}
 		pBoatData = BoatCommand::CreateBoatData(WATER_PH_DATA_PACKET);

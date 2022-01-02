@@ -1,5 +1,6 @@
 #pragma once
 #include <wiringPi.h>
+#include <iostream>
 #include <pthread.h>
 
 #define SER_BUFSIZE 1024  //size of input serial buffer

@@ -836,7 +836,7 @@ bool GetDataLoggingPreferences() {//get data logging preferences from prefs.txt 
 		phcal.dMidCalVoltage = prefsFile.getDouble((char *)"[sensors]",(char *)"ph_midvolt");
 		phcal.dMidCalPH = prefsFile.getDouble((char *)"[sensors]",(char *)"ph_midph");
 		int nPHChannel = prefsFile.getInteger((char *)"[sensors]",(char *)"ph_channel");//A to D channel for pH measurements
-		g_PHSensor = new PHSensor(nPHChannel, g_atod, &phcal);
+		g_PHSensor = new PHSensor(&g_i2cMutex);
 	}
 	if (g_turbiditySensor != nullptr) {
 		delete g_turbiditySensor;

@@ -1,6 +1,14 @@
 //PHSensor.cpp
 //implementation file for PHSensor class
+#include <unistd.h>				//Needed for I2C port
+#include <fcntl.h>				//Needed for I2C port
+#include <sys/ioctl.h>			//Needed for I2C port
+#include <linux/i2c-dev.h>		//Needed for I2C port
+#include <iostream>
+#include <wiringPi.h>
+#include <cstring>
 #include "PHSensor.h"
+
 PHSensor::PHSensor(int nAToDChannel, AToD *pAToD, PH_CALIBRATION *pPHCal) : Sensor(pAToD) {//constructor for analog pH sensor connected to A to D board
 	if (nAToDChannel<1||nAToDChannel>NUM_ATOD_CHANNELS) {
 		m_nAToDChannel = DEFAULT_PH_CHANNEL;
@@ -21,7 +29,7 @@ PHSensor::PHSensor(int nAToDChannel, AToD *pAToD, PH_CALIBRATION *pPHCal) : Sens
     m_bOpenedI2C_OK = false;
 }
 
-PHSensor::PHSensor(unsigned char i2c_channel, pthread_mutex_t* i2c_mutex) : Sensor(nullptr) {//constructor for Atlas scientific pH sensor on I2C
+PHSensor::PHSensor(pthread_mutex_t* i2c_mutex) : Sensor(nullptr) {//constructor for Atlas scientific pH sensor on I2C
 	m_nAToDChannel = -1;
 	memset(&m_phcal, 0, sizeof(PH_CALIBRATION));
 	m_i2c_mutex = i2c_mutex;
@@ -47,7 +55,7 @@ PHSensor::~PHSensor() {
 //dWaterTempDegC: the temperature in deg C of the water
 //returns true if successful, false otherwise
 bool PHSensor::GetPHSensorPH(double& dPHVal, double dWaterTempDegC) {
-    return GetI2CPH(dPHVal, double dWaterTempDegC);
+    return GetI2CPH(dPHVal, dWaterTempDegC);
 }
 
 //GetPHSensorPH: gets the pH probe pH value for AMOS (uses currently available pH probe calibration parameters), assumes some resistor divider settings (see below)
@@ -248,8 +256,6 @@ void PHSensor::unlockmutex() {//unlock mutex for access to the I2C bus
  */
 bool PHSensor::CalibrateMidpoint(double dMidPHVal, double dWaterTempDegC) {
     unsigned char outBytes[32];
-    unsigned char inBytes[32];
-    memset(inBytes, 0, 32);
     if (!m_bOpenedI2C_OK) return false;
 
     lockmutex();
@@ -258,7 +264,24 @@ bool PHSensor::CalibrateMidpoint(double dMidPHVal, double dWaterTempDegC) {
         unlockmutex();
         return false;
     }
-    sprintf((char*)outBytes, "Cal,mid,%.2f", dWaterTempDegC);
+    //apply compensation for temperature (if necessary)
+    if (dWaterTempDegC != DEFAULT_PH_TEMP) {
+        sprintf((char*)outBytes, "T,%.2f", dWaterTempDegC);
+        int nNumToWrite = strlen((char*)outBytes);
+        if (!write_i2c(outBytes, nNumToWrite)) {
+            unlockmutex();
+            return false;
+        }
+        //need to pause for 300 ms (see pH_EZO_Datasheet.pdf document)
+        usleep(300000);
+        //read in response
+        if (!Check2ByteResponse()) {
+            unlockmutex();
+            return false;
+        }
+    }
+    sprintf((char*)outBytes, "Cal,mid,%.2f", dMidPHVal);
+    
     int nNumToWrite = strlen((char*)outBytes);
     
     if (!write_i2c(outBytes, nNumToWrite)) {
@@ -268,30 +291,7 @@ bool PHSensor::CalibrateMidpoint(double dMidPHVal, double dWaterTempDegC) {
     //need to pause for 900 ms (see pH_EZO_Datasheet.pdf document)
     usleep(900000);
     //read in response
-    int nNumRead = read(m_file_i2c, inBytes, 2);
-    if (nNumRead <= 0) {
-        printf("Failed to read in any response bytes from the Atlas pH sensor.\n");
-        unlockmutex();
-        return false;
-    }
-    //check first byte of response
-    if (inBytes[0] == NO_DATA_TO_SEND) {
-        printf("Error, no data to send from the pH sensor.\n");
-        unlockmutex();
-        return false;
-    }
-    else if (inBytes[0] == NOT_READY) {
-        printf("Error, pH sensor not ready.\n");
-        unlockmutex();
-        return false;
-    }
-    else if (inBytes[0] == SYNTAX_ERROR) {
-        printf("Error, syntax error in command to do pH midpoint calibration.\n");
-        unlockmutex();
-        return false;
-    }
-    else if (inBytes[0] != DATA_OK) {
-        printf("Error, unexpected response from pH sensor.\n");
+    if (!Check2ByteResponse()) {
         unlockmutex();
         return false;
     }
@@ -311,8 +311,6 @@ bool PHSensor::CalibrateMidpoint(double dMidPHVal, double dWaterTempDegC) {
  */
 bool PHSensor::CalibrateLowpoint(double dLowPHVal, double dWaterTempDegC) {
     unsigned char outBytes[32];
-    unsigned char inBytes[32];
-    memset(inBytes, 0, 32);
     if (!m_bOpenedI2C_OK) return false;
 
     lockmutex();
@@ -321,7 +319,23 @@ bool PHSensor::CalibrateLowpoint(double dLowPHVal, double dWaterTempDegC) {
         unlockmutex();
         return false;
     }
-    sprintf((char*)outBytes, "Cal,low,%.2f", dWaterTempDegC);
+    //apply compensation for temperature (if necessary)
+    if (dWaterTempDegC != DEFAULT_PH_TEMP) {
+        sprintf((char*)outBytes, "T,%.2f", dWaterTempDegC);
+        int nNumToWrite = strlen((char*)outBytes);
+        if (!write_i2c(outBytes, nNumToWrite)) {
+            unlockmutex();
+            return false;
+        }
+        //need to pause for 300 ms (see pH_EZO_Datasheet.pdf document)
+        usleep(300000);
+        //read in response
+        if (!Check2ByteResponse()) {
+            unlockmutex();
+            return false;
+        }
+    }
+    sprintf((char*)outBytes, "Cal,low,%.2f", dLowPHVal);
     int nNumToWrite = strlen((char*)outBytes);
 
     if (!write_i2c(outBytes, nNumToWrite)) {
@@ -331,30 +345,7 @@ bool PHSensor::CalibrateLowpoint(double dLowPHVal, double dWaterTempDegC) {
     //need to pause for 900 ms (see pH_EZO_Datasheet.pdf document)
     usleep(900000);
     //read in response
-    int nNumRead = read(m_file_i2c, inBytes, 2);
-    if (nNumRead <= 0) {
-        printf("Failed to read in any response bytes from the Atlas pH sensor.\n");
-        unlockmutex();
-        return false;
-    }
-    //check first byte of response
-    if (inBytes[0] == NO_DATA_TO_SEND) {
-        printf("Error, no data to send from the pH sensor.\n");
-        unlockmutex();
-        return false;
-    }
-    else if (inBytes[0] == NOT_READY) {
-        printf("Error, pH sensor not ready.\n");
-        unlockmutex();
-        return false;
-    }
-    else if (inBytes[0] == SYNTAX_ERROR) {
-        printf("Error, syntax error in command to do pH lowpoint calibration.\n");
-        unlockmutex();
-        return false;
-    }
-    else if (inBytes[0] != DATA_OK) {
-        printf("Error, unexpected response from pH sensor.\n");
+    if (!Check2ByteResponse()) {
         unlockmutex();
         return false;
     }
@@ -375,8 +366,6 @@ bool PHSensor::CalibrateLowpoint(double dLowPHVal, double dWaterTempDegC) {
  */
 bool PHSensor::CalibrateHighpoint(double dHighPHVal, double dWaterTempDegC) {
     unsigned char outBytes[32];
-    unsigned char inBytes[32];
-    memset(inBytes, 0, 32);
     if (!m_bOpenedI2C_OK) return false;
 
     lockmutex();
@@ -385,7 +374,23 @@ bool PHSensor::CalibrateHighpoint(double dHighPHVal, double dWaterTempDegC) {
         unlockmutex();
         return false;
     }
-    sprintf((char*)outBytes, "Cal,high,%.2f", dWaterTempDegC);
+    //apply compensation for temperature (if necessary)
+    if (dWaterTempDegC != DEFAULT_PH_TEMP) {
+        sprintf((char*)outBytes, "T,%.2f", dWaterTempDegC);
+        int nNumToWrite = strlen((char*)outBytes);
+        if (!write_i2c(outBytes, nNumToWrite)) {
+            unlockmutex();
+            return false;
+        }
+        //need to pause for 300 ms (see pH_EZO_Datasheet.pdf document)
+        usleep(300000);
+        //read in response
+        if (!Check2ByteResponse()) {
+            unlockmutex();
+            return false;
+        }
+    }
+    sprintf((char*)outBytes, "Cal,high,%.2f", dHighPHVal);
     int nNumToWrite = strlen((char*)outBytes);
 
     if (!write_i2c(outBytes, nNumToWrite)) {
@@ -395,30 +400,7 @@ bool PHSensor::CalibrateHighpoint(double dHighPHVal, double dWaterTempDegC) {
     //need to pause for 900 ms (see pH_EZO_Datasheet.pdf document)
     usleep(900000);
     //read in response
-    int nNumRead = read(m_file_i2c, inBytes, 2);
-    if (nNumRead <= 0) {
-        printf("Failed to read in any response bytes from the Atlas pH sensor.\n");
-        unlockmutex();
-        return false;
-    }
-    //check first byte of response
-    if (inBytes[0] == NO_DATA_TO_SEND) {
-        printf("Error, no data to send from the pH sensor.\n");
-        unlockmutex();
-        return false;
-    }
-    else if (inBytes[0] == NOT_READY) {
-        printf("Error, pH sensor not ready.\n");
-        unlockmutex();
-        return false;
-    }
-    else if (inBytes[0] == SYNTAX_ERROR) {
-        printf("Error, syntax error in command to do pH highpoint calibration.\n");
-        unlockmutex();
-        return false;
-    }
-    else if (inBytes[0] != DATA_OK) {
-        printf("Error, unexpected response from pH sensor.\n");
+    if (!Check2ByteResponse()) {
         unlockmutex();
         return false;
     }
@@ -533,4 +515,58 @@ bool PHSensor::ProtocolLock(int nLock) {
     }
     unlockmutex();
     return true;
+}
+
+bool PHSensor::Check2ByteResponse() {
+    unsigned char inBytes[2] = { 0,0 };
+    int nNumRead = read(m_file_i2c, inBytes, 2);
+    if (nNumRead <= 0) {
+        printf("Failed to read in any response bytes from the Atlas pH sensor.\n");
+        unlockmutex();
+        return false;
+    }
+    //check first byte of response
+    if (inBytes[0] == NO_DATA_TO_SEND) {
+        printf("Error, no data to send from the pH sensor.\n");
+        unlockmutex();
+        return false;
+    }
+    else if (inBytes[0] == NOT_READY) {
+        printf("Error, pH sensor not ready.\n");
+        unlockmutex();
+        return false;
+    }
+    else if (inBytes[0] == SYNTAX_ERROR) {
+        printf("Error, syntax error in command to do pH midpoint calibration.\n");
+        unlockmutex();
+        return false;
+    }
+    else if (inBytes[0] != DATA_OK) {
+        printf("Error, unexpected response from pH sensor.\n");
+        unlockmutex();
+        return false;
+    }
+    return true;
+}
+
+void PHSensor::RestoreFactoryCal() {//restores the factory calibration, reboots the probe
+    unsigned char outBytes[32];
+    memset(outBytes, 0, 32);
+    if (!m_bOpenedI2C_OK) return;
+
+    lockmutex();
+    if (ioctl(m_file_i2c, I2C_SLAVE, DEFAULT_PH_I2C_CHANNEL) < 0) {
+        printf("Failed (error = %s) to acquire bus access and/or talk to slave pH probe device.\n", strerror(errno));
+        unlockmutex();
+        return;
+    }
+    outBytes[0] = (unsigned char)'F';
+    outBytes[1] = (unsigned char)'a';
+    outBytes[2] = (unsigned char)'c';
+    outBytes[3] = (unsigned char)'t';
+    outBytes[4] = (unsigned char)'o';
+    outBytes[5] = (unsigned char)'r';
+    outBytes[6] = (unsigned char)'y';
+    write_i2c(outBytes, 7);
+    unlockmutex();
 }

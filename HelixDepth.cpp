@@ -12,8 +12,13 @@ HelixDepth::HelixDepth(void* pNav, char* szSerialPort, char *depthFilename) {
 	m_pNav = pNav;
 	m_szSerialPort = new char[strlen(szSerialPort) + 1];
 	strcpy(m_szSerialPort, szSerialPort);
-	m_szDepthFilename = new char[strlen(depthFilename) + 1];
-	strcpy(m_szDepthFilename, depthFilename);
+	if (depthFilename != nullptr) {
+		m_szDepthFilename = new char[strlen(depthFilename) + 1];
+		strcpy(m_szDepthFilename, depthFilename);
+	}
+	else {
+		m_szDepthFilename = nullptr;
+	}
 	m_dTemperature = 0.0;//the current temperature reading in deg C
 	m_dDepth = 0.0;//the current depth reading in m
 	m_nNumDepthReadings = 0;//number of depth readings recorded
@@ -219,11 +224,13 @@ void HelixDepth::GetDepthReading(char* depthText, int nSize) {//get depth readin
 				struct tm* timeinfo;
 				time(&rawtime);
 				timeinfo = localtime(&rawtime);
-				Navigation* pNav = (Navigation*)m_pNav;
-				if (pNav->GetNumSatellitesUsed() >= 4) {
-					double dLatitude = pNav->GetLatitude();
-					double dLongitude = pNav->GetLongitude();
-					SaveData(timeinfo, dLatitude, dLongitude);
+				if (m_pNav != nullptr && m_szDepthFilename != nullptr) {
+					Navigation* pNav = (Navigation*)m_pNav;
+					if (pNav->GetNumSatellitesUsed() >= 4) {
+						double dLatitude = pNav->GetLatitude();
+						double dLongitude = pNav->GetLongitude();
+						SaveData(timeinfo, dLatitude, dLongitude);
+					}
 				}
 			}
 		}
@@ -261,6 +268,9 @@ void HelixDepth::SaveData(struct tm* sampleTime, double dLatitude, double dLongi
 }
 
 bool HelixDepth::OpenDataFileForAppending() {//open data file for appending data or create data file if it doesn't exist already
+	if (m_szDepthFilename == nullptr) {
+		return false;
+	}
 	m_dataFile = new std::ofstream();
 	try {
 		m_dataFile->open(m_szDepthFilename, std::ios_base::out | std::ios_base::app);//open file for appending
