@@ -520,7 +520,7 @@ void *sensorCollectionFunction(void *pParam) {
 			}
 		}
 		//check to see if LiDAR measurement should be made
-		if (g_bUseLiDAR&& g_bKeepGoing&&(uiCurrentTime - uiLastLiDARMeasurement)>=1000*g_dLiDAR_IntervalSec) {//do LiDAR measurement
+		if (g_bUseLiDAR && g_lidar!=nullptr && g_bKeepGoing && (uiCurrentTime - uiLastLiDARMeasurement) >= 1000*g_dLiDAR_IntervalSec) {//do LiDAR measurement
 			//double dDistMeters = m_miniLiDAR.getDistance()*.01; //--> uncomment for TF Mini LiDAR
 			double dDistMeters = g_lidar->getDistance()*.01;
 			//unsigned short signalStrength = m_miniLiDAR.getRecentSignalStrength(); //--> uncomment for TF Mini LiDAR
@@ -552,7 +552,7 @@ void *sensorCollectionFunction(void *pParam) {
 			}
 			else {//no obstacles, or at least nothing within 13 m
 				uiObjectCount=0;
-				if (g_bLiDARSafetyMode) {//make sure thrusters are turned off in order to minimize potential impact from collision
+				if (g_bLiDARSafetyMode) {//turn off safety mode
 					if (g_thrusters&&g_thrusters->isInSafetyMode()) {		
 						g_shiplog.LogEntry((char *)"Obstacle no longer detected. Safety mode disengaged.\n",true);
 						g_thrusters->SetObstacleSafetyMode(false);
@@ -560,6 +560,9 @@ void *sensorCollectionFunction(void *pParam) {
 				}
 			}
 			uiLastLiDARMeasurement = uiCurrentTime;
+		}
+		else if (g_thrusters != nullptr) {
+			g_thrusters->SetObstacleSafetyMode(false);//LiDAR is not being used
 		}
 		//check to see if it's time to log sensor data to file
 		if (g_sensorDataFile!=nullptr&&g_nLoggingIntervalSec>0&& g_bKeepGoing) {
