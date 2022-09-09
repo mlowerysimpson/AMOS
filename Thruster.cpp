@@ -113,7 +113,7 @@ void Thruster::SetSpeed(float fSpeed) {
 			nDelayVal += DEAD_BAND;
 			nDelayVal += (int)((MAX_PULSE_TIME - STOP_PULSE_TIME - DEAD_BAND) * fSpeed / MAX_THRUSTER_SPEED);
 		}
-		else {
+		else if (fSpeed < 0) {
 			nDelayVal -= DEAD_BAND;
 			nDelayVal -= (int)((STOP_PULSE_TIME - MIN_PULSE_TIME + DEAD_BAND) * fSpeed / MIN_THRUSTER_SPEED);
 		}
