@@ -35,4 +35,5 @@ private:
 	unsigned int m_uiLastLeakLogTime;//time in ms when something about a leak was last saved to the log file
 	bool m_bSentLeakNotification;//flag is true if a leak notification has been issued already
 	bool m_bRespondedToLeak;//flag is true if some navigational action has been taken to get to shore as quickly as possible (to repair the leak)
+	bool m_bInitialized;
 };

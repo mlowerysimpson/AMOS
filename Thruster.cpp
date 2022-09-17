@@ -183,7 +183,7 @@ void Thruster::SetLeftRightSpeed(float fLeftSpeed, float fRightSpeed) {//set spe
 		float fRudderAngle = 0;
 		float fMaxSpeed = std::max(abs(fLeftSpeed), abs(fRightSpeed));
 		if (fMaxSpeed > 0) {
-			fRudderAngle = MAX_WATER_RUDDER_ANGLE * fSpeedDif / MAX_THRUSTER_SPEED;
+			fRudderAngle = -MAX_WATER_RUDDER_ANGLE * fSpeedDif / MAX_THRUSTER_SPEED;//Note: negative sign is because single prop water servo is upside-down
 		}
 		if (fRudderAngle > MAX_WATER_RUDDER_ANGLE) fRudderAngle = MAX_WATER_RUDDER_ANGLE;
 		else if (fRudderAngle < MIN_WATER_RUDDER_ANGLE) fRudderAngle = MIN_WATER_RUDDER_ANGLE;
@@ -436,6 +436,28 @@ void Thruster::SetPropSpeedAndRudderAngle(float fSpeed, float fRudderAngle) {//s
 	if (m_rudder==nullptr) return;
 	if (m_airProp != nullptr) {
 		m_airProp->SetSpeed(fSpeed);
+	}
+	else if (m_bSingleWaterThruster)
+	{
+		if (m_bSafetyMode) {
+			Stop();
+			return;
+		}
+		m_fLSpeed = fSpeed;
+		m_fRSpeed = fSpeed;
+		m_rudder->SetAngle(fSpeed, -fRudderAngle);//negate rudder angle because servo for single prop water thruster is upside-down
+		int nDelayVal = STOP_PULSE_TIME;
+		if (fSpeed > 0) {
+			nDelayVal += DEAD_BAND;
+			nDelayVal += (int)((MAX_PULSE_TIME - STOP_PULSE_TIME - DEAD_BAND) * fSpeed / MAX_THRUSTER_SPEED);
+		}
+		else if (fSpeed < 0) {
+			nDelayVal -= DEAD_BAND;
+			nDelayVal -= (int)((STOP_PULSE_TIME - MIN_PULSE_TIME + DEAD_BAND) * fSpeed / MIN_THRUSTER_SPEED);
+		}
+		int nPWMData = (int)(nDelayVal / TIME_INCREMENT_US);
+		pwmWrite(SINGLE_THRUSTER_PIN, nPWMData);
+		return;
 	}
 	else {
 		this->SetSpeed(fSpeed);

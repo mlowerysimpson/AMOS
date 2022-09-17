@@ -11,6 +11,7 @@ LeakSensor::LeakSensor() : Sensor(nullptr) {//constructor
 	m_bSentLeakNotification = false;
 	m_bRespondedToLeak = false;
 	m_uiLastLeakLogTime = 0;
+	m_bInitialized = false;
 }
 
 LeakSensor::~LeakSensor() {//destructor
@@ -22,6 +23,12 @@ LeakSensor::~LeakSensor() {//destructor
 //return true if at least one of the leak sensors is showing a leak, otherwise return false
 bool LeakSensor::CheckLeakSensors(void *pShipLog) {
 	const int LOG_EVERY_MS = 60000;//log messages about a leak this often (in ms)
+	if (!m_bInitialized)
+	{
+		//configure pin to be pulled down
+		pullUpDnControl(LEAK_PIN, PUD_OFF);
+		m_bInitialized = true;
+	}
 	int nLeak = digitalRead(LEAK_PIN);
 	if (nLeak>0) {
 		unsigned int uiCurrentTime = millis();

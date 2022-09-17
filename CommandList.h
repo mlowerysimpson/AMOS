@@ -35,6 +35,7 @@
 #define RTK_CORRECTION 35//sending RTK correction bytes to AMOS from an RTK base station
 #define DELETE_FILES 36//delete one or more AMOS files
 #define LAST_COMMAND 37//the highest possible command #
+#define BOAT_TYPE 38//find out what type of boat this is (e.g. air or water propeller boat)
 
 #define PASSCODE_TEXT "AMOS2018"
 
@@ -67,7 +68,7 @@
 //structure used for indicating how many sensors the boat has and what types of sensors they are
 struct SENSOR_INFO {
 	int nNumSensors;//the number of sensors available on the boat
-	int *sensorTypes;//an array of size nNumSensors that describes the types of each sensor, for the definitions of the sensor types, see SensorDataFile.h
+	SensorType *sensorTypes;//an array of size nNumSensors that describes the types of each sensor, for the definitions of the sensor types, see SensorDataFile.h
 };
 
 

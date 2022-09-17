@@ -28,16 +28,25 @@ using namespace std;
 #define MAX_SENSORS 64 //maximum number of sensors that can be attached to the boat
 
 //define sensor types 
-#define WATER_TEMP_DATA 1 //water temperature (in deg C)
-#define BOAT_INTERIOR_TEMP_DATA 2 //boat interior temperature (in deg C)
-#define PH_DATA 3 //water pH value
-#define WATER_TURBIDITY 4 //turbidity value for water
-#define GPS_LATITUDE 5 //GPS latitude (in degrees)
-#define GPS_LONGITUDE 6  //GPS longitude (in degrees)
-#define LEAK_DATA 7//leak sensor (boolean indication of whether or not a leak has occurred)
-#define DIAGNOSTICS_DATA 8 //general diagnostics values (eg: current draw)
-#define DO2_DATA 9 //dissolved oxygen in water (mg/L)
-#define CONDUCTIVITY_DATA 10 //water conductivity (in mS / cm)
+typedef enum SensorType
+{
+	WATER_TEMP_DATA = 1, //water temperature (in deg C)
+	BOAT_INTERIOR_TEMP_DATA = 2, //boat interior temperature (in deg C)
+	PH_DATA = 3, //water pH value
+	WATER_TURBIDITY = 4, //turbidity value for water
+	GPS_LATITUDE = 5, //GPS latitude (in degrees)
+	GPS_LONGITUDE = 6,  //GPS longitude (in degrees)
+	LEAK_DATA = 7, //leak sensor (boolean indication of whether or not a leak has occurred)
+	DIAGNOSTICS_DATA = 8, //general diagnostics values (eg: current draw)
+	DO2_DATA = 9, //dissolved oxygen in water (mg/L)
+	CONDUCTIVITY_DATA = 10, //water conductivity (in mS / cm)
+} SensorType;
+
+typedef enum BoatType
+{
+	AIRPROP_BOAT, //AMOS air propeller boat
+	WATERPROP_BOAT, //AMOS single water propeller boat
+} BoatType;
 
 #define SENSOR_GRID_PAUSETIME_SEC 5 //number of seconds to pause with thrusters off before collecting a sample when doing sensor grid data collection
 
